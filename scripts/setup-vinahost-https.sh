@@ -31,6 +31,9 @@ fi
 if [[ -e "$LINK" && ! -L "$LINK" ]]; then
   echo "Existing non-symlink $LINK. Aborting."; exit 1;
 fi
+if [[ -L "$LINK" && "$(readlink -f "$LINK")" != "$CONF" ]]; then
+  echo "Existing $LINK points to a different site. Aborting."; exit 1;
+fi
 
 mkdir -p "$WEBROOT/.well-known/acme-challenge"
 OLD_CONF=''
