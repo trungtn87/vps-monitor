@@ -2,6 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/common/config.js';
 import { VibeContainerCollector } from '../../src/agent/vibeContainerCollector.js';
+import { createServer } from '../../src/server.js';
+import { MonitorDatabase } from '../../src/db/database.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const secureEnv = {
   NODE_ENV: 'production',
@@ -40,6 +45,11 @@ test('Vibe app exposes container provenance and requires secure production crede
   assert.equal(config.dbPath, '/data/monitor.db');
   assert.throws(() => loadConfig({ ...env, HEARTBEAT_SECRET: '' }), /SECURITY FATAL/);
   assert.throws(() => loadConfig({ ...env, DASHBOARD_PASS: '' }), /SECURITY FATAL/);
+  const publicConfig = loadConfig({ ...env, PUBLIC_DASHBOARD: 'true', DASHBOARD_PASS: '', API_TOKEN: '' });
+  assert.equal(publicConfig.publicDashboard, true);
+  assert.throws(() => loadConfig({
+    ...env, PUBLIC_DASHBOARD: 'true', DASHBOARD_PASS: '', VIBE_HOSTING: 'false'
+  }), /SECURITY FATAL/);
 });
 
 test('Existing VinaHost production mode remains host-scoped and loopback bound', () => {
@@ -66,4 +76,59 @@ test('Vibe collector reports process uptime and unavailable VPS disk, not fake h
   assert.equal(first.diskTotalGb, 0);
   assert.equal(first.diskPct, 0);
   assert.ok(Math.abs(first.uptimeSec - process.uptime()) < 2);
+});
+
+test('Vibe public dashboard exposes GET only, but never bypasses heartbeat signature', async () => {
+  const app = await createServer({
+    NODE_ENV: 'test',
+    SERVER_ID: 'nhanhoa',
+    PORT: '0',
+    HOST: '127.0.0.1',
+    DB_PATH: ':memory:',
+    VIBE_HOSTING: 'true',
+    PUBLIC_DASHBOARD: 'true',
+    PEER_URL: '',
+    HEARTBEAT_SECRET: 'test-heartbeat-secret',
+    DASHBOARD_PASS: '',
+    API_TOKEN: ''
+  });
+  await app.start();
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  try {
+    for (const path of ['/', '/app.js', '/style.css', '/api/status', '/api/metrics', '/api/events']) {
+      const r = await fetch(base + path);
+      assert.equal(r.status, 200, path);
+    }
+    const posted = await fetch(base + '/api/status', { method: 'POST' });
+    assert.equal(posted.status, 401);
+    const unsigned = await fetch(base + '/api/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        senderId: 'vinahost', receiverId: 'nhanhoa', sequence: 1,
+        timestamp: new Date().toISOString(), nonce: 'nonce-unsigned',
+        metrics: { cpuPct: 10 }
+      })
+    });
+    assert.equal(unsigned.status, 401);
+  } finally {
+    await app.stop();
+  }
+});
+
+test('Monitor SQLite is independent and survives reopening its own file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'monitor-db-isolated-'));
+  const monitorDb = join(dir, 'vps-monitor.db');
+  const otherDb = join(dir, 'autotrade-unrelated.db');
+  try {
+    const db = new MonitorDatabase(monitorDb);
+    db.upsertServer({ serverId: 'nhanhoa', name: 'Nhan Hoa', isLocal: true });
+    db.close();
+    assert.notEqual(monitorDb, otherDb);
+    const reopened = new MonitorDatabase(monitorDb);
+    assert.equal(reopened.getServer('nhanhoa').name, 'Nhan Hoa');
+    reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
