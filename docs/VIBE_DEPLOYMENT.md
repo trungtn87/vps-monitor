@@ -85,6 +85,37 @@ A `DEGRADED` status is **not an operational Monitor**. Do not enable
 Discord outage alerts until `/api/status` works, real metrics reach the
 Postgres database, and peer heartbeat is verified.
 
+## Nhân Hòa Vibe Hosting total account quota (CPU/RAM/Disk)
+
+Actual provider endpoint seen in the signed-in Vibe browser:
+`https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81`
+
+- In production with `VIBE_HOSTING=true` and `SERVER_ID=nhanhoa`, VPS Monitor
+  tries the exact HTTPS URL once on start and every 60 seconds. No extra env
+  entry is needed for the owner's existing account `81`.
+- **No browser session cookie is used or saved.** If provider access is
+  session-only, polling will fail safely and container metrics will remain
+  labeled as container values; an approved read-only API credential is needed
+  to enable server-to-server collection. A CORS allow-origin header does not
+  prove anonymous access.
+- Optional variables: `VIBE_QUOTA_ACCESS_TOKEN` for provider-approved bearer
+  authentication; `VIBE_QUOTA_DISABLED=true` to disable; `VIBE_QUOTA_URL`
+  and `VIBE_QUOTA_USER_ID` only if the account changes. Do not set raw
+  cookies or manually copy logged-in headers to the service.
+- Validate the entire response: `success`, `userId`, `stale`,
+  `nhanhoa_available`, `snapshot_at`, and `stats.cpu/ram/disk`.
+- Data is saved to `vps_monitor.hosting_quota_metrics` in the Monitor-only
+  Supabase project. Dashboard switches the Nhân Hòa card and time-history CPU
+  / RAM chart to **total Vibe Hosting account** only when a fresh sample
+  exists. Never confuse these with physical VPS host usage or individual
+  container/process metrics. Provider `nhanhoa_reported_used_*` fields are
+  excluded until their meaning has been verified.
+- A provider API auth/network failure **must not crash the Monitor or block
+  heartbeat**. The database may have no hosting-quota rows until the source
+  can be called by the production container.
+- Tests confirm payload parsing and database integration. Only a live Vibe
+  deployment with actual new rows proves successful background collection.
+
 ## Step 4 — Build and verify (no SSH)
 
 Build and deploy the NEW application through Vibe's GitHub UI. Open the
