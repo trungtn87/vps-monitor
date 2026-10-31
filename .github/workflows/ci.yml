@@ -2,7 +2,7 @@ name: VPS Monitor CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, deploy/vibe-nhanhoa ]
   pull_request:
     branches: [ main ]
 
@@ -35,3 +35,46 @@ jobs:
       - name: Run E2E Lifecycle Script Execution (install.sh -> backup.sh -> update.sh -> rollback.sh -> restore.sh)
         run: |
           bash tests/e2e/test-lifecycle.sh
+
+  vibe-docker:
+    name: Vibe Docker Build & HTTP Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build Vibe image from root Dockerfile
+        run: docker build -t vps-monitor-vibe-test .
+      - name: Start isolated Docker container
+        run: |
+          docker run -d --name vps-monitor-vibe-test \
+            -p 127.0.0.1:13000:3000 \
+            -e NODE_ENV=production \
+            -e VIBE_HOSTING=true \
+            -e TRUSTED_PLATFORM_PROXY=true \
+            -e SERVER_ID=nhanhoa \
+            -e HOST=0.0.0.0 \
+            -e PORT=3000 \
+            -e REQUIRE_TLS=false \
+            -e DB_PATH=/data/monitor.db \
+            -e HEARTBEAT_SECRET=ci-only-random-non-production-test-secret-00000000000000 \
+            -e DASHBOARD_PASS=ci-local-test-password \
+            vps-monitor-vibe-test
+      - name: Test health and dashboard authentication
+        run: |
+          set -eu
+          ready=0
+          for n in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:13000/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then docker logs vps-monitor-vibe-test; exit 1; fi
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13000/api/status)" = "401" ]
+          curl -fsS -u admin:ci-local-test-password http://127.0.0.1:13000/api/status | grep -q '"nhanhoa"'
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-test || true
