@@ -245,8 +245,18 @@ export class HttpRouter {
     if (pathname === '/api/metrics' && method === 'GET') {
       const serverId = url.searchParams.get('server') || this.config.serverId;
       const limit = Math.min(300, parseInt(url.searchParams.get('limit') || '60', 10));
+      // Match chart provenance to the card: when Hosting-wide data is live,
+      // chart account CPU/RAM rather than mixing in container-only history.
+      if (this.config.vibeHosting && serverId === this.config.serverId &&
+          this.db.getLatestHostingQuota && this.db.getHostingQuotaHistory) {
+        const latestQuota = await this.db.getLatestHostingQuota(serverId);
+        if (latestQuota && !latestQuota.isStale) {
+          const metrics = await this.db.getHostingQuotaHistory(serverId, limit);
+          return this._sendJson(res, 200, { serverId, metricScope: 'VIBE_HOSTING_ACCOUNT', metrics });
+        }
+      }
       const metrics = await this.db.getMetricsHistory(serverId, limit);
-      return this._sendJson(res, 200, { serverId, metrics });
+      return this._sendJson(res, 200, { serverId, metricScope: 'CONTAINER', metrics });
     }
 
     // 6. API Events History
