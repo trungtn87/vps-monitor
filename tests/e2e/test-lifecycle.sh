@@ -44,20 +44,25 @@ echo "✔ .git directory successfully preserved in install target."
 # Setup test .env file
 TEST_PORT=5599
 cat <<EOF > "$TEST_INSTALL_DIR/.env"
-NODE_ENV=test
-SERVER_ID=vinahost
-SERVER_NAME=VinaHost (11Ship)
+NODE_ENV="test"
+SERVER_ID="vinahost"
+SERVER_NAME="VinaHost (11Ship)"
 PORT=$TEST_PORT
-DB_PATH=$TEST_INSTALL_DIR/data/monitor.db
-HEARTBEAT_SECRET=lifecycle-test-secret-must-be-at-least-32-characters-long
-DASHBOARD_USER=admin
-DASHBOARD_PASS=testpass12345
-API_TOKEN=testtoken1234567890123456789012345
+DB_PATH="$TEST_INSTALL_DIR/data/monitor.db"
+HEARTBEAT_SECRET="lifecycle-test-secret-must-be-at-least-32-characters-long"
+DASHBOARD_USER="admin"
+DASHBOARD_PASS="testpass12345"
+API_TOKEN="testtoken1234567890123456789012345"
 DISCONNECT_THRESHOLD_SEC=180
 STARTUP_GRACE_SEC=180
 EOF
 chmod 600 "$TEST_INSTALL_DIR/.env"
 echo "✔ Configuration file created at $TEST_INSTALL_DIR/.env"
+
+# Export test environment variables
+set -a
+source "$TEST_INSTALL_DIR/.env"
+set +a
 
 echo "===> [Step 2] Starting service and verifying HTTP /healthz endpoint..."
 cd "$TEST_INSTALL_DIR"

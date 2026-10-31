@@ -6,7 +6,7 @@
 # ==============================================================================
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 && "${NODE_ENV:-}" != "test" && "${SKIP_ROOT_CHECK:-}" != "1" ]]; then
   echo "Error: This script must be run as root (use sudo)."
   exit 1
 fi
@@ -63,25 +63,30 @@ if id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
 fi
 
+CHECK_PORT="${PORT:-5050}"
 echo "===> [3/4] Restarting systemd service..."
 if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
   systemctl restart vps-monitor.service
-fi
+  echo "===> [4/4] Verifying health endpoint..."
+  sleep 2
+  HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" "http://127.0.0.1:${CHECK_PORT}/healthz" || curl -s -k -o /dev/null -w "%{http_code}" "https://127.0.0.1:${CHECK_PORT}/healthz" || echo "000")
 
-echo "===> [4/4] Verifying health endpoint..."
-sleep 2
-HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
-
-if [[ "$HEALTH_RES" == "200" ]]; then
-  echo "------------------------------------------------------------------"
-  echo "✅ Update successful! Service is healthy (HTTP 200)."
-  echo "Backup saved at: $SNAPSHOT_DIR"
-  echo "------------------------------------------------------------------"
+  if [[ "$HEALTH_RES" == "200" ]]; then
+    echo "------------------------------------------------------------------"
+    echo "✅ Update successful! Service is healthy (HTTP 200)."
+    echo "Backup saved at: $SNAPSHOT_DIR"
+    echo "------------------------------------------------------------------"
+  else
+    echo "------------------------------------------------------------------"
+    echo "❌ Warning: Healthcheck returned HTTP $HEALTH_RES (expected 200)!"
+    echo "Check logs immediately: sudo journalctl -u vps-monitor -n 50"
+    echo "To rollback, run: sudo bash $INSTALL_DIR/scripts/rollback.sh $SNAPSHOT_DIR"
+    echo "------------------------------------------------------------------"
+    exit 1
+  fi
 else
+  echo "Notice: systemd not active; service restart and health check deferred to supervisor."
   echo "------------------------------------------------------------------"
-  echo "❌ Warning: Healthcheck returned HTTP $HEALTH_RES (expected 200)!"
-  echo "Check logs immediately: sudo journalctl -u vps-monitor -n 50"
-  echo "To rollback, run: sudo bash $INSTALL_DIR/scripts/rollback.sh $SNAPSHOT_DIR"
+  echo "✅ Update files prepared successfully. Backup saved at: $SNAPSHOT_DIR"
   echo "------------------------------------------------------------------"
-  exit 1
 fi

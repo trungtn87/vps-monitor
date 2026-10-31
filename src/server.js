@@ -17,6 +17,13 @@ import { AuthGuard } from './web/auth.js';
 import { HttpRouter } from './web/routes.js';
 
 export async function createServer(customEnv = null) {
+  if (!customEnv && existsSync('.env') && typeof process.loadEnvFile === 'function') {
+    try {
+      process.loadEnvFile('.env');
+    } catch {
+      // ignore parse errors
+    }
+  }
   const config = loadConfig(customEnv || process.env);
   const serviceStartedAt = Date.now();
   logger.info(`Starting VPS Monitor V1 on [${config.serverName}] (ID: ${config.serverId})`);

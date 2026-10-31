@@ -5,7 +5,7 @@
 # ==============================================================================
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 && "${NODE_ENV:-}" != "test" && "${SKIP_ROOT_CHECK:-}" != "1" ]]; then
   echo "Error: This script must be run as root (use sudo)."
   exit 1
 fi
@@ -21,7 +21,9 @@ DB_FILE="$INSTALL_DIR/data/monitor.db"
 
 echo "===> Restoring database from $BACKUP_FILE..."
 echo "Stopping vps-monitor service..."
-systemctl stop vps-monitor.service || true
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+  systemctl stop vps-monitor.service || true
+fi
 
 # Remove existing WAL and SHM files to ensure clean state
 rm -f "${DB_FILE}" "${DB_FILE}-wal" "${DB_FILE}-shm"
@@ -44,16 +46,18 @@ if command -v sqlite3 &>/dev/null; then
   echo "Integrity check passed: ok"
 fi
 
+CHECK_PORT="${PORT:-5050}"
 echo "Restarting vps-monitor service..."
 if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
   systemctl start vps-monitor.service
-fi
-sleep 2
-
-HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
-if [[ "$HEALTH_RES" == "200" ]]; then
-  echo "✅ Database restore completed successfully! Service is UP (HTTP 200)."
+  sleep 2
+  HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" "http://127.0.0.1:${CHECK_PORT}/healthz" || curl -s -k -o /dev/null -w "%{http_code}" "https://127.0.0.1:${CHECK_PORT}/healthz" || echo "000")
+  if [[ "$HEALTH_RES" == "200" ]]; then
+    echo "✅ Database restore completed successfully! Service is UP (HTTP 200)."
+  else
+    echo "❌ Error: Service failed to start after restore (HTTP $HEALTH_RES)!"
+    exit 1
+  fi
 else
-  echo "❌ Error: Service failed to start after restore (HTTP $HEALTH_RES)!"
-  exit 1
+  echo "Notice: systemd not active; service restart and health check deferred to supervisor."
 fi

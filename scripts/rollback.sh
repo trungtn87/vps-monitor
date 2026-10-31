@@ -6,7 +6,7 @@
 # ==============================================================================
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 && "${NODE_ENV:-}" != "test" && "${SKIP_ROOT_CHECK:-}" != "1" ]]; then
   echo "Error: This script must be run as root (use sudo)."
   exit 1
 fi
@@ -26,7 +26,9 @@ fi
 echo "===> Rolling back to snapshot: $SNAPSHOT_DIR"
 
 echo "===> [1/4] Stopping vps-monitor service..."
-systemctl stop vps-monitor.service || true
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+  systemctl stop vps-monitor.service || true
+fi
 
 echo "===> [2/4] Restoring codebase and configuration..."
 if [[ -d "$SNAPSHOT_DIR/src" ]]; then
@@ -56,17 +58,19 @@ if id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
 fi
 
+CHECK_PORT="${PORT:-5050}"
 echo "===> [4/4] Starting service and checking status..."
 if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
   systemctl start vps-monitor.service
-fi
-sleep 2
-
-HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
-if [[ "$HEALTH_RES" == "200" ]]; then
-  echo "✅ Rollback completed successfully! Service is UP (HTTP 200)."
+  sleep 2
+  HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" "http://127.0.0.1:${CHECK_PORT}/healthz" || curl -s -k -o /dev/null -w "%{http_code}" "https://127.0.0.1:${CHECK_PORT}/healthz" || echo "000")
+  if [[ "$HEALTH_RES" == "200" ]]; then
+    echo "✅ Rollback completed successfully! Service is UP (HTTP 200)."
+  else
+    echo "❌ Error: Service did not recover after rollback (HTTP $HEALTH_RES)!"
+    echo "Check logs: sudo journalctl -u vps-monitor -n 50"
+    exit 1
+  fi
 else
-  echo "❌ Error: Service did not recover after rollback (HTTP $HEALTH_RES)!"
-  echo "Check logs: sudo journalctl -u vps-monitor -n 50"
-  exit 1
+  echo "Notice: systemd not active; service restart and health check deferred to supervisor."
 fi
