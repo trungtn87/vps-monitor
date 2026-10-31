@@ -230,8 +230,8 @@ test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network par
   const evalA = new MonitorEvaluator({ db: dbA, config: { disconnectThresholdSec: 180 } });
   const evalB = new MonitorEvaluator({ db: dbB, config: { disconnectThresholdSec: 180 } });
 
-  assert.strictEqual(await evalA.evaluatePeerHeartbeat('nhanhoa').state, NodeState.ONLINE);
-  assert.strictEqual(await evalB.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
+  assert.strictEqual((await evalA.evaluatePeerHeartbeat('nhanhoa')).state, NodeState.ONLINE);
+  assert.strictEqual((await evalB.evaluatePeerHeartbeat('vinahost')).state, NodeState.UNKNOWN);
 
   dbA.close();
   dbB.close();
@@ -426,8 +426,8 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     db
   });
 
-  assert.strictEqual(await receiver.processHeartbeat(null, 'sig').valid, false);
-  assert.strictEqual(await receiver.processHeartbeat({ sequence: 1 }, 'sig').valid, false);
+  assert.strictEqual((await receiver.processHeartbeat(null, 'sig')).valid, false);
+  assert.strictEqual((await receiver.processHeartbeat({ sequence: 1 }, 'sig')).valid, false);
 
   const wrongReceiverPayload = {
     senderId: 'nhanhoa',
@@ -436,7 +436,7 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     timestamp: new Date().toISOString(),
     nonce: '123'
   };
-  assert.strictEqual(await receiver.processHeartbeat(wrongReceiverPayload, 'sig').code, 403);
+  assert.strictEqual((await receiver.processHeartbeat(wrongReceiverPayload, 'sig')).code, 403);
 
   db.close();
 });
