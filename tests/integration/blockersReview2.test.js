@@ -257,6 +257,8 @@ test('Blocker 5: Resource sample counter and last_metric_id persist across servi
   // SIMULATE PROCESS RESTART: Create new AlertEngine instance with same SQLite database
   const engine2 = new AlertEngine({ db, evaluator, notifier: fakeNotifier, config });
 
+  await engine2.init();
+
   // Right after restart: check that same old metric is NOT re-evaluated or double-counted
   await engine2.checkResources();
   const cpuStateAfterRestart = db.getAlertState('vinahost:cpu');
