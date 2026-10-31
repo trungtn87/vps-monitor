@@ -362,59 +362,34 @@ test('Scenario 10: CPU/RAM/Disk vượt ngưỡng (Sustained check triggers, dis
   db.close();
 });
 
-test('Scenario 11: Ngày hết hạn vượt từng ngưỡng (Mỗi mốc báo đúng 1 lần, không lặp hàng ngày) (Finding 7)', async () => {
+test('Scenario 11: Chỉ nhắc hạn thanh toán D-1 một lần (Finding 7)', async () => {
   const db = new MonitorDatabase(':memory:');
   const notifier = new MockDiscordNotifier();
   const expiryDate = '2026-12-31';
+  const config = { serverId: 'vinahost', serverName: 'VinaHost', expiryDate };
 
-  const testWithDays = async (daysRemaining, expectedMilestone) => {
-    const config = {
-      serverId: 'vinahost',
-      serverName: 'VinaHost',
-      expiryDate
-    };
-    // Mock evaluateExpiry to simulate passage of days
+  const testWithDays = async (daysRemaining, thresholdHit) => {
     const evaluator = {
-      evaluateExpiry: () => ({
-        daysRemaining,
-        thresholdHit: expectedMilestone,
-        isOverdue: daysRemaining <= 0
-      })
+      evaluateExpiry: () => ({ daysRemaining, thresholdHit, isOverdue: daysRemaining < 0 })
     };
     const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
     await alertEngine.checkExpiry();
   };
 
-  // Day 28 (milestone 30d): should alert
-  await testWithDays(28, 30);
+  // Old multi-day alert milestones are intentionally ignored.
+  for (const [days, milestone] of [[28,30],[14,15],[6,7],[2,3]]) {
+    await testWithDays(days, milestone);
+    assert.strictEqual(notifier.alerts.length, 0);
+  }
+
+  await testWithDays(1, 1); // only reminder, exactly D-1
   assert.strictEqual(notifier.alerts.length, 1);
-  assert.ok(notifier.alerts[0].description.includes('30 ngày'));
-
-  // Day 27 (still milestone 30d): should NOT alert again!
-  await testWithDays(27, 30);
-  assert.strictEqual(notifier.alerts.length, 1); // no duplicate
-
-  // Day 14 (crosses to milestone 15d): should alert
-  await testWithDays(14, 15);
-  assert.strictEqual(notifier.alerts.length, 2);
-
-  // Day 6 (crosses to milestone 7d): should alert
-  await testWithDays(6, 7);
-  assert.strictEqual(notifier.alerts.length, 3);
-
-  // Day 2 (crosses to milestone 3d): should alert
-  await testWithDays(2, 3);
-  assert.strictEqual(notifier.alerts.length, 4);
-
-  // Day 1 (crosses to milestone 1d): should alert
-  await testWithDays(1, 1);
-  assert.strictEqual(notifier.alerts.length, 5);
-
-  // Day 0 (overdue): should alert overdue
-  await testWithDays(0, 0);
-  assert.strictEqual(notifier.alerts.length, 6);
-  assert.ok(notifier.alerts[5].title.includes('QUÁ HẠN'));
-
+  assert.ok(notifier.alerts[0].title.includes('TRƯỚC 1 NGÀY'));
+  await testWithDays(1, 1); // repeated 30-second cycles: no duplicate
+  assert.strictEqual(notifier.alerts.length, 1);
+  await testWithDays(0, 0); // payment day: no additional alert
+  await testWithDays(-1, 0); // overdue: no additional alert
+  assert.strictEqual(notifier.alerts.length, 1);
   db.close();
 });
 
