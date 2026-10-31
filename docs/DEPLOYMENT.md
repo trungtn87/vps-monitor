@@ -99,7 +99,18 @@ Nginx chạy dưới tiến trình master có quyền đọc file chứng chỉ 
    sudo nginx -t
    sudo systemctl reload nginx
    ```
-3. Trong `/opt/vps-monitor/.env`: Đặt `HOST=127.0.0.1`, để trống `TLS_CERT_PATH` và `TLS_KEY_PATH`, cấu hình `PEER_URL=https://peer-domain.com`.
+3. Trong `/opt/vps-monitor/.env`:
+   - **BẮT BUỘC đặt `HOST=127.0.0.1`** (hệ thống fail-closed chặn `0.0.0.0` khi `REQUIRE_TLS=false` để tránh lộ cổng HTTP nội bộ).
+   - Đặt `REQUIRE_TLS=false`, để trống `TLS_CERT_PATH` và `TLS_KEY_PATH`.
+   - Cấu hình `PEER_URL=https://peer-domain.com`.
+4. Thiết lập tường lửa UFW chặn tuyệt đối cổng 5050 từ ngoài:
+   ```bash
+   sudo ufw deny 5050/tcp
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw status
+   ```
+5. Đọc chi tiết quy trình nghiệm thu tại: [`docs/PREFLIGHT_ACCEPTANCE.md`](./PREFLIGHT_ACCEPTANCE.md).
 
 ---
 

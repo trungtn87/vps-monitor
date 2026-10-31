@@ -29,7 +29,9 @@ if [[ -f "$DB_FILE" ]]; then
   else
     # Fallback: stop service briefly to guarantee zero in-flight writes
     echo "sqlite3 CLI not present; stopping service briefly for clean snapshot..."
-    systemctl stop vps-monitor.service || true
+    if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+      systemctl stop vps-monitor.service || true
+    fi
     cp "$DB_FILE" "$SNAPSHOT_DIR/monitor.db"
     if [[ -f "${DB_FILE}-wal" ]]; then
       cp "${DB_FILE}-wal" "$SNAPSHOT_DIR/monitor.db-wal"

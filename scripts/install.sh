@@ -11,7 +11,7 @@ if [[ "$ROLE" != "vinahost" && "$ROLE" != "nhanhoa" ]]; then
   exit 1
 fi
 
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 && "${NODE_ENV:-}" != "test" && "${SKIP_ROOT_CHECK:-}" != "1" ]]; then
   echo "Error: This script must be run as root (use sudo)."
   exit 1
 fi
@@ -33,39 +33,52 @@ echo "Node.js version: $(node -v) (OK)"
 
 echo "===> [2/6] Checking port availability (default: 5050)..."
 PORT=5050
-if ss -tuln | grep -q ":${PORT} "; then
-  echo "Warning: Port ${PORT} is already in use by another process!"
-  echo "Please verify existing services before proceeding."
-  ss -tulnp | grep ":${PORT} "
-  exit 1
+if command -v ss &>/dev/null; then
+  if ss -tuln | grep -q ":${PORT} "; then
+    echo "Warning: Port ${PORT} is already in use by another process!"
+    echo "Please verify existing services before proceeding."
+    ss -tulnp | grep ":${PORT} " 2>/dev/null || true
+    exit 1
+  fi
+  echo "Port ${PORT} is available."
+else
+  echo "Notice: ss command not found; skipping port check."
 fi
-echo "Port ${PORT} is available."
 
 echo "===> [3/6] Creating service user 'vpsmon'..."
-if ! id -u vpsmon &>/dev/null; then
-  useradd --system --shell /usr/sbin/nologin --home-dir /opt/vps-monitor vpsmon
-  echo "User 'vpsmon' created."
+if [[ $EUID -eq 0 ]]; then
+  if ! id -u vpsmon &>/dev/null; then
+    useradd --system --shell /usr/sbin/nologin --home-dir /opt/vps-monitor vpsmon
+    echo "User 'vpsmon' created."
+  else
+    echo "User 'vpsmon' already exists."
+  fi
 else
-  echo "User 'vpsmon' already exists."
+  echo "Notice: Non-root test execution; skipping useradd vpsmon."
 fi
 
-echo "===> [4/6] Setting up $INSTALL_DIR..."
 INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
+echo "===> [4/6] Setting up $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/data"
 mkdir -p "$INSTALL_DIR/backups"
 
 # Blocker 1: Setup secure directory for TLS certs if native TLS is used
-mkdir -p /etc/vps-monitor/certs
-if id -u vpsmon &>/dev/null; then
-  chown -R vpsmon:vpsmon /etc/vps-monitor
+if [[ $EUID -eq 0 ]]; then
+  mkdir -p /etc/vps-monitor/certs
+  if id -u vpsmon &>/dev/null; then
+    chown -R vpsmon:vpsmon /etc/vps-monitor
+  fi
+  chmod 700 /etc/vps-monitor
+  chmod 700 /etc/vps-monitor/certs
+else
+  mkdir -p "$INSTALL_DIR/certs"
 fi
-chmod 700 /etc/vps-monitor
-chmod 700 /etc/vps-monitor/certs
 
 # Copy all repository files to install dir including .git and dotfiles (Finding 5)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 shopt -s dotglob
-cp -r ./* "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
 shopt -u dotglob
 
 # Ensure scripts have execute permissions
@@ -102,7 +115,7 @@ if [[ -d /etc/systemd/system ]]; then
 fi
 
 echo "===> [6/6] Setting up logrotate..."
-if [[ -f "$INSTALL_DIR/ops/logrotate/vps-monitor" ]]; then
+if [[ $EUID -eq 0 && -d /etc/logrotate.d && -f "$INSTALL_DIR/ops/logrotate/vps-monitor" ]]; then
   cp "$INSTALL_DIR/ops/logrotate/vps-monitor" /etc/logrotate.d/vps-monitor
 fi
 

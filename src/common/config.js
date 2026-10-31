@@ -6,6 +6,9 @@ export function loadConfig(env = process.env) {
   const heartbeatSecret = env.HEARTBEAT_SECRET || (nodeEnv === 'test' ? 'test-shared-secret-at-least-32-chars-long' : '');
   const dashboardPass = env.DASHBOARD_PASS || '';
   const apiToken = env.API_TOKEN || '';
+  const requireTls = env.REQUIRE_TLS === 'true' || env.REQUIRE_TLS === '1';
+  const allowInsecureHttp = env.ALLOW_INSECURE_HTTP === 'true' || env.ALLOW_INSECURE_HTTP === '1';
+  const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
   if (nodeEnv === 'production') {
@@ -14,6 +17,14 @@ export function loadConfig(env = process.env) {
     }
     if (!dashboardPass && !apiToken) {
       throw new Error('[SECURITY FATAL] DASHBOARD_PASS or API_TOKEN must be configured in production (fail-closed authentication).');
+    }
+    // Review Round 3: Prevent unencrypted public HTTP when terminating TLS via reverse proxy
+    if (!requireTls && host === '0.0.0.0' && !allowInsecureHttp) {
+      throw new Error(
+        '[SECURITY FATAL] Binding to 0.0.0.0 with REQUIRE_TLS=false in production exposes unencrypted HTTP to the public internet. ' +
+        'Under Nginx/Caddy reverse proxy TLS termination, set HOST=127.0.0.1. ' +
+        'If using native HTTPS directly on port 5050, set REQUIRE_TLS=true with valid TLS certificates.'
+      );
     }
   }
 
@@ -26,14 +37,14 @@ export function loadConfig(env = process.env) {
     // Server Identification
     serverId,
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
-    host: env.HOST || '0.0.0.0',
+    host,
     port: parseInt(env.PORT || '5050', 10),
     dbPath: env.DB_PATH || (nodeEnv === 'test' ? ':memory:' : './data/monitor.db'),
     
     // TLS / HTTPS Transport
     tlsCertPath: env.TLS_CERT_PATH || '',
     tlsKeyPath: env.TLS_KEY_PATH || '',
-    requireTls: env.REQUIRE_TLS === 'true' || env.REQUIRE_TLS === '1',
+    requireTls,
 
     // Peer Node
     peerServerId: env.PEER_SERVER_ID || (isVinaHost ? 'nhanhoa' : 'vinahost'),

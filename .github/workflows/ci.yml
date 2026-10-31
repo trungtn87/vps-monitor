@@ -32,6 +32,6 @@ jobs:
         run: |
           npm test
 
-      - name: Run E2E Lifecycle Verification (Install -> Backup -> Rollback -> Restore)
+      - name: Run E2E Lifecycle Script Execution (install.sh -> backup.sh -> update.sh -> rollback.sh -> restore.sh)
         run: |
           bash tests/e2e/test-lifecycle.sh

@@ -75,11 +75,37 @@ test('loadConfig in production fails closed on weak or missing secrets (Finding 
     });
   }, /DASHBOARD_PASS or API_TOKEN must be configured/);
 
-  // 4. Valid production configuration succeeds
+  // 4. Insecure 0.0.0.0 binding without TLS fails closed in production (Review Round 3)
+  assert.throws(() => {
+    loadConfig({
+      NODE_ENV: 'production',
+      HOST: '0.0.0.0',
+      REQUIRE_TLS: 'false',
+      HEARTBEAT_SECRET: 'valid-secret-that-is-at-least-32-chars-long!',
+      DASHBOARD_PASS: 'supersecurepassword'
+    });
+  }, /Binding to 0.0.0.0 with REQUIRE_TLS=false in production exposes unencrypted HTTP/);
+
+  // 5. Valid production configuration with loopback reverse proxy succeeds
   const valid = loadConfig({
     NODE_ENV: 'production',
+    HOST: '127.0.0.1',
+    REQUIRE_TLS: 'false',
     HEARTBEAT_SECRET: 'valid-secret-that-is-at-least-32-chars-long!',
     DASHBOARD_PASS: 'supersecurepassword'
   });
   assert.strictEqual(valid.nodeEnv, 'production');
+  assert.strictEqual(valid.host, '127.0.0.1');
+
+  // 6. Valid production configuration with native TLS succeeds on 0.0.0.0
+  const validTls = loadConfig({
+    NODE_ENV: 'production',
+    HOST: '0.0.0.0',
+    REQUIRE_TLS: 'true',
+    TLS_CERT_PATH: '/etc/vps-monitor/certs/fullchain.pem',
+    TLS_KEY_PATH: '/etc/vps-monitor/certs/privkey.pem',
+    HEARTBEAT_SECRET: 'valid-secret-that-is-at-least-32-chars-long!',
+    DASHBOARD_PASS: 'supersecurepassword'
+  });
+  assert.strictEqual(validTls.requireTls, true);
 });

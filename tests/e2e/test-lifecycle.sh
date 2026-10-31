@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# VPS Monitor V1 — End-to-End Lifecycle Test (Install -> Backup -> Update -> Rollback -> Restore)
+# VPS Monitor V1 — End-to-End Lifecycle Test
+# Directly executes scripts: install.sh -> backup.sh -> update.sh -> rollback.sh -> restore.sh
 # Verifies operational safety on Ubuntu 24.04 / Linux runners in CI
 # ==============================================================================
 set -euo pipefail
@@ -12,6 +13,7 @@ echo "=================================================================="
 WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_ROOT=$(mktemp -d /tmp/vpsmon-lifecycle-XXXXXX)
 TEST_INSTALL_DIR="$TEST_ROOT/opt-vps-monitor"
+TEST_PORT=5599
 
 cleanup() {
   echo "===> Cleaning up temporary test directory: $TEST_ROOT"
@@ -22,33 +24,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "===> [Step 1] Verifying installation script directory structure and permissions..."
+# ------------------------------------------------------------------------------
+# [Step 1] Execute scripts/install.sh directly
+# ------------------------------------------------------------------------------
+echo "===> [Step 1] Executing scripts/install.sh vinahost..."
 export VPS_MONITOR_DIR="$TEST_INSTALL_DIR"
-mkdir -p "$TEST_INSTALL_DIR"
+export SKIP_ROOT_CHECK="1"
+export NODE_ENV="test"
 cd "$WORK_DIR"
 
-# Simulate install.sh copying repository with dotglob
-mkdir -p "$TEST_INSTALL_DIR/data"
-mkdir -p "$TEST_INSTALL_DIR/backups"
-shopt -s dotglob
-cp -r ./* "$TEST_INSTALL_DIR/"
-shopt -u dotglob
+bash scripts/install.sh vinahost
 
-# Verify .git is preserved (Finding 5)
-if [[ ! -d "$TEST_INSTALL_DIR/.git" ]]; then
-  echo "❌ Error: .git was not copied to $TEST_INSTALL_DIR!"
+# Verify installation output
+if [[ ! -d "$TEST_INSTALL_DIR" || ! -d "$TEST_INSTALL_DIR/.git" ]]; then
+  echo "❌ Error: install.sh failed to set up $TEST_INSTALL_DIR with .git preserved!"
   exit 1
 fi
-echo "✔ .git directory successfully preserved in install target."
+echo "✔ install.sh completed: directory structure and .git verified."
 
-# Setup test .env file
-TEST_PORT=5599
+# Configure test parameters in .env
 cat <<EOF > "$TEST_INSTALL_DIR/.env"
 NODE_ENV="test"
 SERVER_ID="vinahost"
 SERVER_NAME="VinaHost (11Ship)"
+HOST="127.0.0.1"
 PORT=$TEST_PORT
 DB_PATH="$TEST_INSTALL_DIR/data/monitor.db"
+REQUIRE_TLS="false"
 HEARTBEAT_SECRET="lifecycle-test-secret-must-be-at-least-32-characters-long"
 DASHBOARD_USER="admin"
 DASHBOARD_PASS="testpass12345"
@@ -57,20 +59,17 @@ DISCONNECT_THRESHOLD_SEC=180
 STARTUP_GRACE_SEC=180
 EOF
 chmod 600 "$TEST_INSTALL_DIR/.env"
-echo "✔ Configuration file created at $TEST_INSTALL_DIR/.env"
+echo "✔ Test environment configured at $TEST_INSTALL_DIR/.env"
 
-# Export test environment variables
-set -a
-source "$TEST_INSTALL_DIR/.env"
-set +a
-
+# ------------------------------------------------------------------------------
+# [Step 2] Start service and verify /healthz
+# ------------------------------------------------------------------------------
 echo "===> [Step 2] Starting service and verifying HTTP /healthz endpoint..."
 cd "$TEST_INSTALL_DIR"
 node src/server.js &
 SERVER_PID=$!
 sleep 2
 
-# Verify process is running
 if ! kill -0 "$SERVER_PID" 2>/dev/null; then
   echo "❌ Error: Server process exited unexpectedly!"
   exit 1
@@ -83,13 +82,15 @@ if [[ "$HEALTH_RES" != "200" ]]; then
 fi
 echo "✔ Healthcheck verified (HTTP 200 OK)."
 
+# ------------------------------------------------------------------------------
+# [Step 3] Populate database with monitor metrics
+# ------------------------------------------------------------------------------
 echo "===> [Step 3] Populating database with active monitor data..."
-# Run a quick node script to populate test data into SQLite
 node -e '
 import { MonitorDatabase } from "./src/db/database.js";
 const db = new MonitorDatabase("./data/monitor.db");
-db.upsertServer({ serverId: "vinahost", name: "VinaHost", role: "11ship" });
-db.upsertServer({ serverId: "nhanhoa", name: "Nhân Hòa", role: "autotrade" });
+db.upsertServer({ serverId: "vinahost", name: "VinaHost", host: "127.0.0.1", port: 5599, role: "11ship" });
+db.upsertServer({ serverId: "nhanhoa", name: "Nhân Hòa", host: "127.0.0.1", port: 5599, role: "autotrade" });
 db.insertMetrics({
   serverId: "vinahost",
   cpuPct: 45.2,
@@ -115,7 +116,10 @@ db.close();
 '
 echo "✔ Test data successfully written to SQLite."
 
-echo "===> [Step 4] Testing atomic backup script (scripts/backup.sh)..."
+# ------------------------------------------------------------------------------
+# [Step 4] Execute scripts/backup.sh directly
+# ------------------------------------------------------------------------------
+echo "===> [Step 4] Executing scripts/backup.sh directly..."
 bash "$TEST_INSTALL_DIR/scripts/backup.sh" "$TEST_INSTALL_DIR/backups"
 
 BACKUP_FILE=$(ls -t "$TEST_INSTALL_DIR/backups"/monitor_backup_*.db | head -1)
@@ -125,7 +129,6 @@ if [[ ! -s "$BACKUP_FILE" ]]; then
 fi
 echo "✔ Backup created at $BACKUP_FILE"
 
-# Verify backup SQLite integrity check if sqlite3 is installed
 if command -v sqlite3 &>/dev/null; then
   INTEGRITY=$(sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
   if [[ "$INTEGRITY" != "ok" ]]; then
@@ -135,33 +138,57 @@ if command -v sqlite3 &>/dev/null; then
   echo "✔ Backup SQLite PRAGMA integrity_check passed: ok."
 fi
 
-echo "===> [Step 5] Testing pre-update snapshot creation and codebase rollback..."
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-SNAPSHOT_DIR="$TEST_INSTALL_DIR/backups/pre_update_$TIMESTAMP"
-mkdir -p "$SNAPSHOT_DIR"
+# ------------------------------------------------------------------------------
+# [Step 5] Execute scripts/update.sh directly with real git pull
+# ------------------------------------------------------------------------------
+echo "===> [Step 5] Executing scripts/update.sh directly..."
+# Create a local bare origin for isolated git pull testing
+MOCK_ORIGIN="$TEST_ROOT/mock_origin.git"
+git clone --bare "$TEST_INSTALL_DIR" "$MOCK_ORIGIN" 2>/dev/null
+git -C "$TEST_INSTALL_DIR" remote set-url origin "$MOCK_ORIGIN"
 
-# Test atomic online backup (VACUUM INTO)
-if command -v sqlite3 &>/dev/null; then
-  sqlite3 "$TEST_INSTALL_DIR/data/monitor.db" "PRAGMA wal_checkpoint(TRUNCATE);"
-  sqlite3 "$TEST_INSTALL_DIR/data/monitor.db" "VACUUM INTO '$SNAPSHOT_DIR/monitor.db';"
-else
-  cp "$TEST_INSTALL_DIR/data/monitor.db" "$SNAPSHOT_DIR/monitor.db"
+# Push a test modification to mock origin
+TEMP_DEV="$TEST_ROOT/temp_dev"
+git clone "$MOCK_ORIGIN" "$TEMP_DEV" 2>/dev/null
+git -C "$TEMP_DEV" config user.name "E2E Tester"
+git -C "$TEMP_DEV" config user.email "test@example.com"
+echo "// Verified update at $(date)" >> "$TEMP_DEV/src/server.js"
+git -C "$TEMP_DEV" commit -am "test: simulated upstream code update"
+git -C "$TEMP_DEV" push origin HEAD 2>/dev/null
+
+# Execute the actual update.sh script
+bash "$TEST_INSTALL_DIR/scripts/update.sh"
+
+# Verify update was pulled and applied
+if ! grep -q "Verified update at" "$TEST_INSTALL_DIR/src/server.js"; then
+  echo "❌ Error: update.sh did not pull updated code into $TEST_INSTALL_DIR/src/server.js!"
+  exit 1
 fi
-cp -r "$TEST_INSTALL_DIR/src" "$SNAPSHOT_DIR/"
-cp "$TEST_INSTALL_DIR/package.json" "$SNAPSHOT_DIR/"
-cp "$TEST_INSTALL_DIR/.env" "$SNAPSHOT_DIR/.env.bak"
-echo "✔ Pre-update snapshot created at $SNAPSHOT_DIR"
 
-# Simulate code modification (a simulated update)
-echo "// updated at $(date)" >> "$TEST_INSTALL_DIR/src/server.js"
+# Verify pre_update snapshot was created
+LATEST_SNAPSHOT=$(ls -td "$TEST_INSTALL_DIR/backups"/pre_update_* | head -1)
+if [[ ! -d "$LATEST_SNAPSHOT" || ! -f "$LATEST_SNAPSHOT/src/server.js" ]]; then
+  echo "❌ Error: update.sh did not generate valid pre_update snapshot!"
+  exit 1
+fi
+echo "✔ update.sh verified: git pull succeeded, pre-update snapshot created at $LATEST_SNAPSHOT."
 
-echo "===> [Step 6] Testing rollback script (scripts/rollback.sh)..."
-# Stop background server
+# ------------------------------------------------------------------------------
+# [Step 6] Execute scripts/rollback.sh directly
+# ------------------------------------------------------------------------------
+echo "===> [Step 6] Executing scripts/rollback.sh directly..."
+# Stop test server
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 
-# Execute rollback to snapshot
-bash "$TEST_INSTALL_DIR/scripts/rollback.sh" "$SNAPSHOT_DIR"
+# Execute rollback.sh (auto-detects latest pre_update snapshot)
+bash "$TEST_INSTALL_DIR/scripts/rollback.sh"
+
+# Verify code was reverted (simulated update removed)
+if grep -q "Verified update at" "$TEST_INSTALL_DIR/src/server.js"; then
+  echo "❌ Error: rollback.sh did not revert src/server.js to pre-update state!"
+  exit 1
+fi
 
 # Restart server and verify health
 node "$TEST_INSTALL_DIR/src/server.js" &
@@ -173,15 +200,18 @@ if [[ "$HEALTH_RES" != "200" ]]; then
   echo "❌ Error: Server failed to respond with 200 after rollback! Got: $HEALTH_RES"
   exit 1
 fi
-echo "✔ Healthcheck verified after rollback (HTTP 200 OK)."
+echo "✔ rollback.sh verified: codebase reverted cleanly and service is healthy."
 
-echo "===> [Step 7] Testing database restore script (scripts/restore.sh)..."
+# ------------------------------------------------------------------------------
+# [Step 7] Execute scripts/restore.sh directly
+# ------------------------------------------------------------------------------
+echo "===> [Step 7] Executing scripts/restore.sh directly..."
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 
 bash "$TEST_INSTALL_DIR/scripts/restore.sh" "$BACKUP_FILE"
 
-# Restart server and verify status endpoint with restored data
+# Restart server and verify API status returns restored data
 node "$TEST_INSTALL_DIR/src/server.js" &
 SERVER_PID=$!
 sleep 2
@@ -191,8 +221,8 @@ if ! echo "$STATUS_RES" | grep -q "vinahost"; then
   echo "❌ Error: Restored database did not contain expected data! Response: $STATUS_RES"
   exit 1
 fi
-echo "✔ Database restore verified. Data intact and accessible via API."
+echo "✔ restore.sh verified: database restored and verified via /api/status."
 
 echo "=================================================================="
-echo "🎉 ALL LIFECYCLE E2E CHECKS PASSED SUCCESSFULLY!"
+echo "🎉 ALL LIFECYCLE SCRIPTS (install -> backup -> update -> rollback -> restore) EXECUTED AND PASSED DIRECTLY!"
 echo "=================================================================="
