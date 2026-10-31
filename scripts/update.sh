@@ -29,7 +29,7 @@ if [[ -f "$DB_FILE" ]]; then
   else
     # Fallback: stop service briefly to guarantee zero in-flight writes
     echo "sqlite3 CLI not present; stopping service briefly for clean snapshot..."
-    if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
+    if [[ $EUID -eq 0 ]] && command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
       systemctl stop vps-monitor.service || true
     fi
     cp "$DB_FILE" "$SNAPSHOT_DIR/monitor.db"
@@ -75,7 +75,7 @@ fi
 
 CHECK_PORT="${PORT:-5050}"
 echo "===> [3/4] Restarting systemd service..."
-if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
+if [[ $EUID -eq 0 ]] && command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
   systemctl restart vps-monitor.service
   echo "===> [4/4] Verifying health endpoint..."
   sleep 2
