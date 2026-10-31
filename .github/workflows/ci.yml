@@ -144,6 +144,27 @@ jobs:
             console.log('PROVIDER_QUOTA_PROBE_ERROR=' + (err.code || err.name || 'unknown'));
           }
           JS
+      - name: Probe actual AutoTrade engine health (non-blocking)
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'JS'
+          for (const path of ['/health', '/engine/health']) {
+            const url = 'https://vibetpmzwpxt5.vibe3.vnws.com' + path;
+            try {
+              const r = await fetch(url, {method:'GET',redirect:'error',
+                signal:AbortSignal.timeout(7500)});
+              const type=r.headers.get('content-type') || '';
+              let app=null;
+              if (type.includes('json')) {
+                const data=await r.json();
+                app={ok:data.ok===true,service:data.service||data.engine||null};
+              }
+              console.log('AUTOTRADE_PROBE '+JSON.stringify({path,status:r.status,app}));
+            } catch(e) {
+              console.log('AUTOTRADE_PROBE '+JSON.stringify({path,error:e.name||'unavailable'}));
+            }
+          }
+          JS
       - name: Start diagnostic mode with intentionally missing credentials
         run: |
           docker run -d --name vps-monitor-vibe-diagnostic --network host \
