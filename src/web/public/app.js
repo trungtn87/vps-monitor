@@ -63,13 +63,18 @@ function renderStatus(data) {
   for (const srv of data.servers) {
     const prefix = srv.serverId === 'vinahost' ? 'vh' : 'nh';
 
+    // Use account-wide Vibe quotas only if the independent API has returned
+    // a fresh verified sample; never mislabel container values as host totals.
+    const quota = srv.hostingQuota && !srv.hostingQuota.isStale ? srv.hostingQuota : null;
     // Show resource provenance: the Vibe app runs in an isolated container.
     const scopeBadge = document.getElementById(`${prefix}-app-badge`);
     if (scopeBadge) {
       const appName = prefix === 'nh' ? 'AutoTrade' : '11Ship';
-      scopeBadge.textContent = srv.metricScope === 'CONTAINER'
-        ? `${appName} · Container`
-        : appName;
+      scopeBadge.textContent = quota && prefix === 'nh'
+        ? 'Tổng gói Vibe Hosting'
+        : srv.metricScope === 'CONTAINER'
+          ? `${appName} · Container`
+          : appName;
     }
 
     // Status dot & pill
@@ -127,14 +132,23 @@ function renderStatus(data) {
     if (srv.metrics) {
       const m = srv.metrics;
       const staleTag = m.isStale ? ' (cũ)' : '';
-      updateMetricBar(`${prefix}-cpu`, m.cpuPct,
-        `${m.cpuPct}%${srv.metricScope === 'CONTAINER' ? ' (process)' : ''}${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-ram`, m.ramPct,
-        m.ramTotalMb > 0 ? `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`
-          : `${m.ramUsedMb} MB (container limit N/A)${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-disk`, m.diskPct,
-        m.diskTotalGb > 0 ? `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`
-          : `N/A (không có quyền host)${staleTag}`, m.isStale);
+      if (quota && prefix === 'nh') {
+        updateMetricBar(`${prefix}-cpu`, quota.cpuPct,
+          `${quota.cpuUsedVcpu.toFixed(3)} / ${quota.cpuQuotaVcpu} vCPU (${quota.cpuPct.toFixed(1)}%)`);
+        updateMetricBar(`${prefix}-ram`, quota.ramPct,
+          `${quota.ramUsedMb.toFixed(1)} / ${quota.ramQuotaMb} MB (${quota.ramPct.toFixed(1)}%)`);
+        updateMetricBar(`${prefix}-disk`, quota.diskPct,
+          `${quota.diskUsedMb.toFixed(2)} / ${quota.diskQuotaMb} MB (${quota.diskPct.toFixed(1)}%)`);
+      } else {
+        updateMetricBar(`${prefix}-cpu`, m.cpuPct,
+          `${m.cpuPct}%${srv.metricScope === 'CONTAINER' ? ' (process)' : ''}${staleTag}`, m.isStale);
+        updateMetricBar(`${prefix}-ram`, m.ramPct,
+          m.ramTotalMb > 0 ? `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`
+            : `${m.ramUsedMb} MB (container limit N/A)${staleTag}`, m.isStale);
+        updateMetricBar(`${prefix}-disk`, m.diskPct,
+          m.diskTotalGb > 0 ? `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`
+            : `N/A (không có quyền host)${staleTag}`, m.isStale);
+      }
 
       const rxMb = (m.netRxBytes / (1024 * 1024)).toFixed(1);
       const txMb = (m.netTxBytes / (1024 * 1024)).toFixed(1);
