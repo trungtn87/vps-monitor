@@ -59,3 +59,23 @@ test('real PostgreSQL adapter preserves metrics and atomic alert outbox across r
     await reopened.cleanOldData(30);
   } finally { await reopened.close(); }
 });
+
+test('Supabase Session pooler uses encrypted SSL require without CA verification', () => {
+  const url = 'postgresql://vps_monitor_app.gmpgtwtxhjwjeincvkxn:example-password@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require';
+  const pg = new PgMonitorDatabase(url);
+  assert.equal(pg.pool.options.host, 'aws-0-ap-southeast-1.pooler.supabase.com');
+  assert.equal(pg.pool.options.port, 5432);
+  assert.equal(pg.pool.options.user, 'vps_monitor_app.gmpgtwtxhjwjeincvkxn');
+  assert.equal(pg.pool.options.ssl.rejectUnauthorized, false);
+  assert.equal(pg.pool.options.password, 'example-password');
+  // Do not close the never-opened Pool just to inspect construction:
+  // no connection is created by new Pool().
+});
+
+test('Supabase connection must never silently fall back to plaintext or wrong project', () => {
+  const base = 'postgresql://vps_monitor_app.gmpgtwtxhjwjeincvkxn:example-password@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres';
+  assert.throws(() => new PgMonitorDatabase(base + '?sslmode=disable'), /SSL mode=require/);
+  assert.throws(() => new PgMonitorDatabase(base.replace('gmpgtwtxhjwjeincvkxn', 'frrlvmhblvqyjxbjspdq')), /dedicated VPS-Monitor/);
+  const local = new PgMonitorDatabase('postgresql://postgres:test@127.0.0.1:5432/postgres', { testMode: true });
+  assert.equal(local.pool.options.ssl, false);
+});
