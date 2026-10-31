@@ -76,6 +76,9 @@ export function loadConfig(env = process.env) {
     publicDashboard,
     dbBackend,
     databaseUrl,
+    // Customer-confirmed Vibe Starter plan; separate from measured app use.
+    vibePlanCpuVcpu: parseFloat(env.VIBE_PLAN_CPU_VCPU || '1'),
+    vibePlanRamMb: parseFloat(env.VIBE_PLAN_RAM_MB || '2048'),
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
