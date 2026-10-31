@@ -3,13 +3,13 @@ import assert from 'node:assert';
 import { MonitorDatabase } from '../../src/db/database.js';
 import { MonitorEvaluator, NodeState } from '../../src/monitor/evaluator.js';
 
-test('MonitorEvaluator peer heartbeat states', () => {
+test('MonitorEvaluator peer heartbeat states', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { disconnectThresholdSec: 180, startupGraceSec: 180, cpuThresholdPct: 85, ramThresholdPct: 85, diskThresholdPct: 85 };
   const evaluator = new MonitorEvaluator({ db, config });
 
   // 1. Initial state within startup grace -> UNKNOWN
-  let res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  let res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.UNKNOWN);
   assert.strictEqual(res.isStartupFailure, false);
 
@@ -22,37 +22,37 @@ test('MonitorEvaluator peer heartbeat states', () => {
     status: 'VALID'
   });
 
-  res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.ONLINE);
 
   // 3. Mark alert_state as DISCONNECTED in DB, then evaluate -> RECOVERED
   db.setAlertState('nhanhoa:heartbeat', NodeState.DISCONNECTED);
-  res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.RECOVERED);
 
   // 4. Over threshold (> 180s elapsed) -> DISCONNECTED
   db.db.prepare("UPDATE heartbeat_log SET received_at = datetime('now', '-200 seconds')").run();
-  res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.DISCONNECTED);
 
   db.close();
 });
 
-test('MonitorEvaluator startup grace period detects missing first heartbeat (Finding 4)', () => {
+test('MonitorEvaluator startup grace period detects missing first heartbeat (Finding 4)', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { disconnectThresholdSec: 180, startupGraceSec: 180 };
 
   // Case 1: Started 60 seconds ago (< 180s grace) -> UNKNOWN
   const recentStartedAt = Date.now() - 60 * 1000;
   const recentEvaluator = new MonitorEvaluator({ db, config, serviceStartedAt: recentStartedAt });
-  let res = recentEvaluator.evaluatePeerHeartbeat('nhanhoa');
+  let res = await recentEvaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.UNKNOWN);
   assert.strictEqual(res.isStartupFailure, false);
 
   // Case 2: Started 200 seconds ago (> 180s grace) with ZERO heartbeats -> DISCONNECTED
   const oldStartedAt = Date.now() - 200 * 1000;
   const oldEvaluator = new MonitorEvaluator({ db, config, serviceStartedAt: oldStartedAt });
-  res = oldEvaluator.evaluatePeerHeartbeat('nhanhoa');
+  res = await oldEvaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.DISCONNECTED);
   assert.strictEqual(res.isStartupFailure, true);
   assert.ok(res.elapsedSec >= 200);
@@ -60,7 +60,7 @@ test('MonitorEvaluator startup grace period detects missing first heartbeat (Fin
   db.close();
 });
 
-test('MonitorEvaluator evaluateResources checks thresholds', () => {
+test('MonitorEvaluator evaluateResources checks thresholds', async () => {
   const db = new MonitorDatabase(':memory:');
   db.upsertServer({ serverId: 'vinahost', name: 'VinaHost', host: 'localhost', port: 5050, isLocal: true });
 
@@ -80,7 +80,7 @@ test('MonitorEvaluator evaluateResources checks thresholds', () => {
     uptimeSec: 3600
   });
 
-  let evalRes = evaluator.evaluateResources('vinahost');
+  let evalRes = await evaluator.evaluateResources('vinahost');
   assert.strictEqual(evalRes.cpuAlert, false);
   assert.strictEqual(evalRes.ramAlert, false);
   assert.strictEqual(evalRes.diskAlert, false);
@@ -98,7 +98,7 @@ test('MonitorEvaluator evaluateResources checks thresholds', () => {
     uptimeSec: 3660
   });
 
-  evalRes = evaluator.evaluateResources('vinahost');
+  evalRes = await evaluator.evaluateResources('vinahost');
   assert.strictEqual(evalRes.cpuAlert, true);
   assert.strictEqual(evalRes.ramAlert, false);
 
