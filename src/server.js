@@ -7,6 +7,7 @@ import { MonitorDatabase } from './db/database.js';
 import { PgMonitorDatabase } from './db/pgDatabase.js';
 import { SystemCollector } from './agent/collector.js';
 import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
+import { VibeQuotaClient } from './agent/vibeQuotaClient.js';
 import { AppHealthChecker } from './agent/appHealth.js';
 import { HeartbeatClient } from './monitor/heartbeatClient.js';
 import { HeartbeatReceiver } from './monitor/heartbeatReceiver.js';
@@ -218,6 +219,25 @@ export async function createServer(customEnv = null) {
     });
   }
 
+  // Optional provider quota API. If access is not approved/available,
+  // keep original container metrics and never claim hosting-wide totals.
+  const quotaClient = config.vibeHosting && config.vibeQuotaUrl
+    ? new VibeQuotaClient({
+        url: config.vibeQuotaUrl,
+        token: config.vibeQuotaAccessToken,
+        expectedUserId: config.vibeQuotaUserId
+      }) : null;
+  let quotaTimer = null;
+  const runQuotaCycle = async () => {
+    if (!quotaClient) return;
+    try {
+      const quota = await quotaClient.read();
+      await db.insertHostingQuota(config.serverId, quota);
+    } catch (err) {
+      logger.warn(`Vibe hosting quota collection unavailable: ${String(err.message).slice(0,90).replace(/[^A-Z0-9_ ]/gi, '')}`);
+    }
+  };
+
   // 7. Interval Loops
   let agentTimer = null;
   let heartbeatTimer = null;
@@ -277,9 +297,11 @@ export async function createServer(customEnv = null) {
   const startTimers = () => {
     // Immediate first runs
     runAgentCycle();
+    runQuotaCycle();
     runRetentionCycle();
 
     agentTimer = setInterval(runAgentCycle, config.heartbeatIntervalSec * 1000);
+    if (quotaClient) quotaTimer = setInterval(runQuotaCycle, 60000);
     heartbeatTimer = setInterval(runHeartbeatCycle, config.heartbeatIntervalSec * 1000);
     alertTimer = setInterval(runAlertCycle, 30 * 1000); // Check connectivity & alerts every 30s
     retentionTimer = setInterval(runRetentionCycle, 24 * 60 * 60 * 1000); // Daily retention
@@ -287,6 +309,7 @@ export async function createServer(customEnv = null) {
 
   const stopTimers = () => {
     if (agentTimer) clearInterval(agentTimer);
+    if (quotaTimer) clearInterval(quotaTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (alertTimer) clearInterval(alertTimer);
     if (retentionTimer) clearInterval(retentionTimer);
@@ -306,6 +329,7 @@ export async function createServer(customEnv = null) {
     commands,
     discordInteractions,
     runAgentCycle,
+    runQuotaCycle,
     runHeartbeatCycle,
     runAlertCycle,
     runRetentionCycle,
