@@ -37,8 +37,12 @@ export function loadConfig(env = process.env) {
     if (dbBackend === 'supabase_postgres' && !databaseUrl) {
       throw new Error('[DB CONFIG ERROR] DATABASE_URL required for Supabase PostgreSQL.');
     }
-    if (publicDashboard && (!vibeHosting || !trustedPlatformProxy)) {
-      throw new Error('[SECURITY FATAL] PUBLIC_DASHBOARD=true is allowed only for Vibe behind the configured HTTPS platform proxy.');
+    // Read-only public dashboard can also run behind VinaHost's local-only
+    // Nginx HTTPS reverse proxy. Mutating APIs retain their own signatures.
+    const safePublicReadProxy = trustedPlatformProxy && !requireTls &&
+      (vibeHosting ? host === '0.0.0.0' : host === '127.0.0.1');
+    if (publicDashboard && !safePublicReadProxy) {
+      throw new Error('[SECURITY FATAL] PUBLIC_DASHBOARD=true requires a trusted HTTPS reverse proxy and a safe listener.');
     }
     if (!publicDashboard && !dashboardPass && !apiToken) {
       throw new Error('[SECURITY FATAL] DASHBOARD_PASS or API_TOKEN must be configured in production (fail-closed authentication).');
