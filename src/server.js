@@ -5,6 +5,7 @@ import { loadConfig } from './common/config.js';
 import { logger } from './common/logger.js';
 import { MonitorDatabase } from './db/database.js';
 import { SystemCollector } from './agent/collector.js';
+import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
 import { AppHealthChecker } from './agent/appHealth.js';
 import { HeartbeatClient } from './monitor/heartbeatClient.js';
 import { HeartbeatReceiver } from './monitor/heartbeatReceiver.js';
@@ -62,7 +63,7 @@ export async function createServer(customEnv = null) {
   });
 
   // 4. Initialize Components
-  const collector = new SystemCollector();
+  const collector = config.vibeHosting ? new VibeContainerCollector() : new SystemCollector();
   const appChecker = new AppHealthChecker(
     config.appServiceId,
     config.appServiceName,
@@ -114,9 +115,10 @@ export async function createServer(customEnv = null) {
       error: services[0].last_error
     } : null;
 
-    if (!latestMetrics) return { appService };
+    if (!latestMetrics) return { appService, metricScope: config.metricScope };
 
     return {
+      metricScope: config.metricScope,
       cpuPct: latestMetrics.cpu_pct,
       ramUsedMb: latestMetrics.ram_used_mb,
       ramTotalMb: latestMetrics.ram_total_mb,
