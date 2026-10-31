@@ -113,6 +113,28 @@ jobs:
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
             psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | awk '$1 >= 2 { found=1 } END { exit !found }'
+      - name: Probe Nhân Hòa quota API from a clean server (non-blocking)
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'JS'
+          const endpoint = 'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81';
+          try {
+            const res = await fetch(endpoint, {
+              method: 'GET', headers: { accept: 'application/json' },
+              redirect: 'error', signal: AbortSignal.timeout(7000)
+            });
+            let valid = false;
+            if (res.ok) {
+              const payload = await res.json();
+              valid = payload.success === true && String(payload.userId) === '81'
+                && Boolean(payload.stats?.cpu && payload.stats?.ram && payload.stats?.disk);
+            }
+            console.log('PROVIDER_QUOTA_HTTP=' + res.status);
+            console.log('PROVIDER_QUOTA_ANONYMOUS_VALID=' + valid);
+          } catch (err) {
+            console.log('PROVIDER_QUOTA_PROBE_ERROR=' + (err.code || err.name || 'unknown'));
+          }
+          JS
       - name: Start diagnostic mode with intentionally missing credentials
         run: |
           docker run -d --name vps-monitor-vibe-diagnostic --network host \
