@@ -40,45 +40,63 @@ jobs:
           bash tests/e2e/test-lifecycle.sh
 
   vibe-docker:
-    name: Vibe Docker Build & HTTP Smoke Test
+    name: PostgreSQL + Vibe Docker Build & HTTP Smoke Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: monitor_ci_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Build Vibe image from root Dockerfile
-        run: docker build -t vps-monitor-vibe-test .
-      - name: Start isolated Docker container
+      - name: Bootstrap private Postgres Monitor schema
         run: |
-          docker run -d --name vps-monitor-vibe-test \
-            -p 127.0.0.1:13000:3000 \
-            -e NODE_ENV=production \
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
+            psql -h 127.0.0.1 -U postgres -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/monitor_schema.sql
+      - name: Build Vibe image
+        run: docker build -t vps-monitor-vibe-test .
+      - name: Start app using real Postgres
+        run: |
+          docker run -d --name vps-monitor-vibe-test --network host \
+            -e NODE_ENV=test \
             -e VIBE_HOSTING=true \
             -e TRUSTED_PLATFORM_PROXY=true \
             -e PUBLIC_DASHBOARD=true \
+            -e DB_BACKEND=supabase_postgres \
+            -e DATABASE_URL=postgresql://postgres:monitor_ci_only@127.0.0.1:5432/postgres \
             -e SERVER_ID=nhanhoa \
-            -e HOST=0.0.0.0 \
+            -e HOST=127.0.0.1 \
             -e PORT=3000 \
-            -e REQUIRE_TLS=false \
-            -e DB_PATH=/data/vps-monitor.db \
-            -e HEARTBEAT_SECRET=ci-only-random-non-production-test-secret-00000000000000 \
-            -e DASHBOARD_PASS=ci-local-test-password \
+            -e HEARTBEAT_SECRET=ci-only-secret-for-heartbeat-signature-0000000000 \
             vps-monitor-vibe-test
-      - name: Test health and dashboard authentication
+      - name: Check public dashboard and private writes
         run: |
           set -eu
           ready=0
           for n in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:13000/healthz >/dev/null; then
-              ready=1
-              break
-            fi
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null; then ready=1; break; fi
             sleep 1
           done
           if [ "$ready" -ne 1 ]; then docker logs vps-monitor-vibe-test; exit 1; fi
-          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13000/api/status)" = "200" ]
-          curl -fsS http://127.0.0.1:13000/api/status | grep -q '"nhanhoa"'
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:13000/api/status)" = "401" ]
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:13000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/status)" = "200" ]
+          curl -fsS http://127.0.0.1:3000/api/status | grep -q '"nhanhoa"'
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/status)" = "401" ]
+          # Unsupported unsigned heartbeats cannot be ingested.
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
+            psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | grep -q '^2$'
       - name: Cleanup
         if: always()
         run: |
