@@ -51,11 +51,12 @@ jobs:
             -e NODE_ENV=production \
             -e VIBE_HOSTING=true \
             -e TRUSTED_PLATFORM_PROXY=true \
+            -e PUBLIC_DASHBOARD=true \
             -e SERVER_ID=nhanhoa \
             -e HOST=0.0.0.0 \
             -e PORT=3000 \
             -e REQUIRE_TLS=false \
-            -e DB_PATH=/data/monitor.db \
+            -e DB_PATH=/data/vps-monitor.db \
             -e HEARTBEAT_SECRET=ci-only-random-non-production-test-secret-00000000000000 \
             -e DASHBOARD_PASS=ci-local-test-password \
             vps-monitor-vibe-test
@@ -71,8 +72,10 @@ jobs:
             sleep 1
           done
           if [ "$ready" -ne 1 ]; then docker logs vps-monitor-vibe-test; exit 1; fi
-          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13000/api/status)" = "401" ]
-          curl -fsS -u admin:ci-local-test-password http://127.0.0.1:13000/api/status | grep -q '"nhanhoa"'
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13000/api/status)" = "200" ]
+          curl -fsS http://127.0.0.1:13000/api/status | grep -q '"nhanhoa"'
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:13000/api/status)" = "401" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:13000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
       - name: Cleanup
         if: always()
         run: |
