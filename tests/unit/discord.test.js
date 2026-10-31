@@ -91,3 +91,63 @@ test('DiscordInteractionsHandler processes Ping and Application Commands with Ed
 
   db.close();
 });
+
+test('DiscordInteractionsHandler enforces user and guild allowlists (Finding 9)', () => {
+  const db = new MonitorDatabase(':memory:');
+  const config = { serverId: 'vinahost', serverName: 'VinaHost', disconnectThresholdSec: 180 };
+  const evaluator = new MonitorEvaluator({ db, config });
+  const commands = new DiscordCommands({ db, evaluator, config });
+
+  const keyPair = generateKeyPairSync('ed25519');
+  const rawPub = keyPair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+  const publicKeyHex = rawPub.toString('hex');
+
+  const handler = new DiscordInteractionsHandler({
+    publicKey: publicKeyHex,
+    commands,
+    allowedUserIds: ['user-123'],
+    allowedGuildIds: ['guild-789']
+  });
+
+  const signPayload = (payload) => {
+    const ts = '1690000000';
+    const body = JSON.stringify(payload);
+    const sig = sign(null, Buffer.from(ts + body), keyPair.privateKey).toString('hex');
+    return { body, sig, ts };
+  };
+
+  // Case 1: Wrong Guild -> Rejected
+  const wrongGuild = signPayload({
+    type: 2,
+    guild_id: 'wrong-guild',
+    user: { id: 'user-123' },
+    data: { name: 'status' }
+  });
+  const res1 = handler.handle(wrongGuild.body, wrongGuild.sig, wrongGuild.ts);
+  assert.strictEqual(res1.status, 200);
+  assert.ok(res1.body.data.content.includes('Discord Server được ủy quyền'));
+
+  // Case 2: Wrong User in allowed Guild -> Rejected
+  const wrongUser = signPayload({
+    type: 2,
+    guild_id: 'guild-789',
+    user: { id: 'unauthorized-user' },
+    data: { name: 'status' }
+  });
+  const res2 = handler.handle(wrongUser.body, wrongUser.sig, wrongUser.ts);
+  assert.strictEqual(res2.status, 200);
+  assert.ok(res2.body.data.content.includes('không có quyền'));
+
+  // Case 3: Allowed User in allowed Guild -> Allowed
+  const allowed = signPayload({
+    type: 2,
+    guild_id: 'guild-789',
+    user: { id: 'user-123' },
+    data: { name: 'status' }
+  });
+  const res3 = handler.handle(allowed.body, allowed.sig, allowed.ts);
+  assert.strictEqual(res3.status, 200);
+  assert.ok(res3.body.data.embeds[0].title.includes('TỔNG QUAN'));
+
+  db.close();
+});

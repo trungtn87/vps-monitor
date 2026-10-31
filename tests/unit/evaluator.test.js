@@ -5,12 +5,13 @@ import { MonitorEvaluator, NodeState } from '../../src/monitor/evaluator.js';
 
 test('MonitorEvaluator peer heartbeat states', () => {
   const db = new MonitorDatabase(':memory:');
-  const config = { disconnectThresholdSec: 180, cpuThresholdPct: 85, ramThresholdPct: 85, diskThresholdPct: 85 };
+  const config = { disconnectThresholdSec: 180, startupGraceSec: 180, cpuThresholdPct: 85, ramThresholdPct: 85, diskThresholdPct: 85 };
   const evaluator = new MonitorEvaluator({ db, config });
 
-  // 1. Initial state without any heartbeat -> UNKNOWN
+  // 1. Initial state within startup grace -> UNKNOWN
   let res = evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.UNKNOWN);
+  assert.strictEqual(res.isStartupFailure, false);
 
   // 2. Insert valid recent heartbeat -> ONLINE
   db.recordHeartbeat({
@@ -30,10 +31,31 @@ test('MonitorEvaluator peer heartbeat states', () => {
   assert.strictEqual(res.state, NodeState.RECOVERED);
 
   // 4. Over threshold (> 180s elapsed) -> DISCONNECTED
-  // Overwrite received_at with an old timestamp (e.g. 200s ago)
   db.db.prepare("UPDATE heartbeat_log SET received_at = datetime('now', '-200 seconds')").run();
   res = evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.DISCONNECTED);
+
+  db.close();
+});
+
+test('MonitorEvaluator startup grace period detects missing first heartbeat (Finding 4)', () => {
+  const db = new MonitorDatabase(':memory:');
+  const config = { disconnectThresholdSec: 180, startupGraceSec: 180 };
+
+  // Case 1: Started 60 seconds ago (< 180s grace) -> UNKNOWN
+  const recentStartedAt = Date.now() - 60 * 1000;
+  const recentEvaluator = new MonitorEvaluator({ db, config, serviceStartedAt: recentStartedAt });
+  let res = recentEvaluator.evaluatePeerHeartbeat('nhanhoa');
+  assert.strictEqual(res.state, NodeState.UNKNOWN);
+  assert.strictEqual(res.isStartupFailure, false);
+
+  // Case 2: Started 200 seconds ago (> 180s grace) with ZERO heartbeats -> DISCONNECTED
+  const oldStartedAt = Date.now() - 200 * 1000;
+  const oldEvaluator = new MonitorEvaluator({ db, config, serviceStartedAt: oldStartedAt });
+  res = oldEvaluator.evaluatePeerHeartbeat('nhanhoa');
+  assert.strictEqual(res.state, NodeState.DISCONNECTED);
+  assert.strictEqual(res.isStartupFailure, true);
+  assert.ok(res.elapsedSec >= 200);
 
   db.close();
 });
@@ -83,7 +105,7 @@ test('MonitorEvaluator evaluateResources checks thresholds', () => {
   db.close();
 });
 
-test('MonitorEvaluator evaluateExpiry thresholds (30, 15, 7, 3, 1 days)', () => {
+test('MonitorEvaluator evaluateExpiry thresholds (30, 15, 7, 3, 1 days & overdue)', () => {
   const db = new MonitorDatabase(':memory:');
   const evaluator = new MonitorEvaluator({ db, config: {} });
 
@@ -105,10 +127,15 @@ test('MonitorEvaluator evaluateExpiry thresholds (30, 15, 7, 3, 1 days)', () => 
   assert.strictEqual(evaluator.evaluateExpiry(futureDate(5)).thresholdHit, 7);
 
   // 2 days away -> threshold 3
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(2)).thresholdHit, 3);
+  assert.strictEqual(evaluator.evaluateExpiry(futureDate(1)).thresholdHit, 3);
 
   // 0 days away (today) -> threshold 1
   assert.strictEqual(evaluator.evaluateExpiry(futureDate(0)).thresholdHit, 1);
+
+  // -2 days away (past expiry) -> threshold 0 (overdue)
+  const overdueRes = evaluator.evaluateExpiry(futureDate(-2));
+  assert.strictEqual(overdueRes.thresholdHit, 0);
+  assert.strictEqual(overdueRes.isOverdue, true);
 
   db.close();
 });
