@@ -42,10 +42,12 @@ test('reject stale, mismatched and invalid Vibe metrics', () => {
 
 test('Vibe client restricts destinations and does not send browser cookies', async () => {
   assert.throws(()=>new VibeQuotaClient({url:'http://vibe.nhanhoa.com/api/quota'}),/official HTTPS/);
-  assert.throws(()=>new VibeQuotaClient({url:'https://evil.example.com/api/quota'}),/official HTTPS/);
+  assert.throws(()=>new VibeQuotaClient({url:'https://evil.example.com/api/quota'}),/exact Vibe stats/);
+  assert.throws(()=>new VibeQuotaClient({url:'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=82',expectedUserId:'81'}),/MISMATCH/);
+  assert.throws(()=>new VibeQuotaClient({url:'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81&redirect=http://bad.test',expectedUserId:'81'}),/official HTTPS/);
   let opts=null;
   const client = new VibeQuotaClient({
-    url:'https://vibe.nhanhoa.com/api/quota/check-quota?userId=81',
+    url:'http://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81/check-quota?userId=81',
     token:'example-read-token', expectedUserId:'81',
     fetchFn:async (_,p)=>{opts=p;return {ok:true,text:async()=>JSON.stringify(fixture())};}
   });
