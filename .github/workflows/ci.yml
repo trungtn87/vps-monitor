@@ -124,12 +124,21 @@ jobs:
               redirect: 'error', signal: AbortSignal.timeout(7000)
             });
             let valid = false;
+            let keys = [];
+            let success = null, available = null, stale = null, userMatch = false;
             if (res.ok) {
               const payload = await res.json();
-              valid = payload.success === true && String(payload.userId) === '81'
-                && Boolean(payload.stats?.cpu && payload.stats?.ram && payload.stats?.disk);
+              keys = Object.keys(payload || {}).slice(0,12);
+              success = payload.success ?? null;
+              available = payload.nhanhoa_available ?? null;
+              stale = payload.stale ?? null;
+              userMatch = String(payload.userId) === '81';
+              valid = success === true && userMatch &&
+                Boolean(payload.stats?.cpu && payload.stats?.ram && payload.stats?.disk);
             }
             console.log('PROVIDER_QUOTA_HTTP=' + res.status);
+            console.log('PROVIDER_QUOTA_FIELDS=' + JSON.stringify(keys));
+            console.log('PROVIDER_QUOTA_FLAGS=' + JSON.stringify({success,available,stale,userMatch}));
             console.log('PROVIDER_QUOTA_ANONYMOUS_VALID=' + valid);
           } catch (err) {
             console.log('PROVIDER_QUOTA_PROBE_ERROR=' + (err.code || err.name || 'unknown'));
