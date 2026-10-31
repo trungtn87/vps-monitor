@@ -105,37 +105,38 @@ test('MonitorEvaluator evaluateResources checks thresholds', async () => {
   db.close();
 });
 
-test('MonitorEvaluator evaluateExpiry thresholds (30, 15, 7, 3, 1 days & overdue)', () => {
+test('Billing dates use Vietnam calendar, including today and overdue', () => {
   const db = new MonitorDatabase(':memory:');
   const evaluator = new MonitorEvaluator({ db, config: {} });
+  const clock = Date.parse('2026-10-31T17:00:00Z'); // 2026-11-01 00:00 ICT
 
-  const futureDate = (days) => {
-    const d = new Date(Date.now() + days * 86400 * 1000);
-    return d.toISOString().slice(0, 10);
-  };
+  for (const [date, expectedHit, expectedDays, overdue] of [
+    ['2026-12-16', null, 45, false],
+    ['2026-12-01', 30, 30, false],
+    ['2026-11-30', 30, 29, false], // Nhân Hòa Vibe payment due
+    ['2026-11-16', 15, 15, false],
+    ['2026-11-08', 7, 7, false],
+    ['2026-11-04', 3, 3, false],
+    ['2026-11-02', 1, 1, false],
+    ['2026-11-01', 0, 0, false],
+    ['2026-10-31', 0, -1, true],
+    ['2027-01-12', null, 72, false] // VinaHost next payment
+  ]) {
+    const result = evaluator.evaluateExpiry(date, clock);
+    assert.strictEqual(result.thresholdHit, expectedHit, date);
+    assert.strictEqual(result.daysRemaining, expectedDays, date);
+    assert.strictEqual(result.isOverdue, overdue, date);
+  }
 
-  // 45 days away -> no threshold hit
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(45)).thresholdHit, null);
+  // 23:59:59 local on Nov 1 is still one day before Nov 2.
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T16:59:59Z')).daysRemaining, 1);
+  // Exactly 00:00:00 local on Nov 2 is due today, NOT overdue.
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T17:00:00Z')).daysRemaining, 0);
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T17:00:00Z')).isOverdue, false);
+  // Tomorrow becomes overdue by one calendar day.
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-02T17:00:00Z')).daysRemaining, -1);
 
-  // 25 days away -> threshold 30
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(25)).thresholdHit, 30);
-
-  // 12 days away -> threshold 15
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(12)).thresholdHit, 15);
-
-  // 5 days away -> threshold 7
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(5)).thresholdHit, 7);
-
-  // 2 days away -> threshold 3
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(1)).thresholdHit, 3);
-
-  // 0 days away (today) -> threshold 1
-  assert.strictEqual(evaluator.evaluateExpiry(futureDate(0)).thresholdHit, 1);
-
-  // -2 days away (past expiry) -> threshold 0 (overdue)
-  const overdueRes = evaluator.evaluateExpiry(futureDate(-2));
-  assert.strictEqual(overdueRes.thresholdHit, 0);
-  assert.strictEqual(overdueRes.isOverdue, true);
-
+  assert.strictEqual(evaluator.evaluateExpiry('2026-02-30', clock).daysRemaining, null);
+  assert.strictEqual(evaluator.evaluateExpiry('11/30/2026', clock).daysRemaining, null);
   db.close();
 });
