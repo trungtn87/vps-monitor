@@ -1,0 +1,25 @@
+{
+  "name": "vps-monitor",
+  "version": "1.0.0",
+  "description": "Cross-monitoring and alerting service between VinaHost (11Ship) and Nhan Hoa (AutoTrade)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/**/*.test.js",
+    "lint": "node -e \"const fs = require('fs'), cp = require('child_process'); function check(d){ for(const f of fs.readdirSync(d, {withFileTypes: true})){ const p = d + '/' + f.name; if(f.isDirectory()) check(p); else if(f.name.endsWith('.js')) cp.execSync('node --check ' + p); } } check('src'); check('tests'); console.log('All JavaScript files syntax verified successfully.');\""
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "vps-monitor",
+    "monitoring",
+    "heartbeat",
+    "discord-alert",
+    "11ship",
+    "autotrade"
+  ],
+  "author": "trungtn87",
+  "license": "MIT"
+}

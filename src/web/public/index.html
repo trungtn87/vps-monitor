@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VPS Monitor — 11Ship & AutoTrade</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-icon">📡</div>
+        <div>
+          <h1>VPS Monitor <span class="badge badge-v1">V1</span></h1>
+          <p class="subtitle">Giám sát hai chiều VinaHost (11Ship) & Nhân Hòa (AutoTrade)</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div id="connectionStatus" class="pulse-indicator">Đang đồng bộ...</div>
+        <button id="refreshBtn" class="btn btn-sm btn-outline">🔄 Làm mới</button>
+      </div>
+    </header>
+
+    <!-- Expiry Alert Banner (if any VPS <= 7 days) -->
+    <div id="expiryBanner" class="alert-banner" style="display: none;">
+      <span class="alert-icon">⏰</span>
+      <span id="expiryBannerText">Cảnh báo: VPS sắp hết hạn!</span>
+    </div>
+
+    <!-- Main Cards Grid -->
+    <main class="grid-cards">
+      <!-- VinaHost Card -->
+      <section class="card server-card" id="card-vinahost">
+        <div class="card-header">
+          <div class="server-title">
+            <span class="status-dot dot-unknown" id="vh-dot"></span>
+            <h2>VinaHost</h2>
+            <span class="role-badge" id="vh-app-badge">11Ship</span>
+          </div>
+          <span class="status-pill status-unknown" id="vh-status">UNKNOWN</span>
+        </div>
+
+        <div class="card-body">
+          <!-- Resource Bars -->
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">CPU</span>
+              <span class="value" id="vh-cpu">0%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="vh-cpu-bar" style="width: 0%"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">RAM</span>
+              <span class="value" id="vh-ram">0 / 0 MB (0%)</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="vh-ram-bar" style="width: 0%"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">Disk</span>
+              <span class="value" id="vh-disk">0 / 0 GB (0%)</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="vh-disk-bar" style="width: 0%"></div></div>
+          </div>
+
+          <!-- Secondary Metrics -->
+          <div class="stats-mini-grid">
+            <div class="stat-mini">
+              <span class="mini-label">Mạng RX / TX</span>
+              <span class="mini-value" id="vh-net">0 / 0 MB</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Uptime</span>
+              <span class="mini-value" id="vh-uptime">0d 0h</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Dịch vụ 11Ship</span>
+              <span class="mini-value" id="vh-service">UNKNOWN</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Heartbeat cuối</span>
+              <span class="mini-value" id="vh-heartbeat">--</span>
+            </div>
+          </div>
+
+          <!-- Expiry Info -->
+          <div class="expiry-box">
+            <span>📅 Ngày hết hạn: <strong id="vh-expiry-date">--</strong></span>
+            <span class="days-remaining" id="vh-days-remaining">--</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Nhân Hòa Card -->
+      <section class="card server-card" id="card-nhanhoa">
+        <div class="card-header">
+          <div class="server-title">
+            <span class="status-dot dot-unknown" id="nh-dot"></span>
+            <h2>Nhân Hòa</h2>
+            <span class="role-badge" id="nh-app-badge">AutoTrade</span>
+          </div>
+          <span class="status-pill status-unknown" id="nh-status">UNKNOWN</span>
+        </div>
+
+        <div class="card-body">
+          <!-- Resource Bars -->
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">CPU</span>
+              <span class="value" id="nh-cpu">0%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="nh-cpu-bar" style="width: 0%"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">RAM</span>
+              <span class="value" id="nh-ram">0 / 0 MB (0%)</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="nh-ram-bar" style="width: 0%"></div></div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric-info">
+              <span class="label">Disk</span>
+              <span class="value" id="nh-disk">0 / 0 GB (0%)</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="nh-disk-bar" style="width: 0%"></div></div>
+          </div>
+
+          <!-- Secondary Metrics -->
+          <div class="stats-mini-grid">
+            <div class="stat-mini">
+              <span class="mini-label">Mạng RX / TX</span>
+              <span class="mini-value" id="nh-net">0 / 0 MB</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Uptime</span>
+              <span class="mini-value" id="nh-uptime">0d 0h</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Dịch vụ AutoTrade</span>
+              <span class="mini-value" id="nh-service">UNKNOWN</span>
+            </div>
+            <div class="stat-mini">
+              <span class="mini-label">Heartbeat cuối</span>
+              <span class="mini-value" id="nh-heartbeat">--</span>
+            </div>
+          </div>
+
+          <!-- Expiry Info -->
+          <div class="expiry-box">
+            <span>📅 Ngày hết hạn: <strong id="nh-expiry-date">--</strong></span>
+            <span class="days-remaining" id="nh-days-remaining">--</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Resource Trend Charts -->
+    <section class="card chart-section">
+      <div class="section-header">
+        <h3>📈 Biến thiên tài nguyên theo thời gian</h3>
+        <div class="chart-selector">
+          <button class="tab-btn active" data-chart="vinahost">VinaHost</button>
+          <button class="tab-btn" data-chart="nhanhoa">Nhân Hòa</button>
+        </div>
+      </div>
+      <div class="chart-container">
+        <div class="chart-wrapper">
+          <h4>CPU Trend (%)</h4>
+          <svg id="cpuChart" class="trend-chart" viewBox="0 0 500 120" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="chart-wrapper">
+          <h4>RAM Trend (%)</h4>
+          <svg id="ramChart" class="trend-chart" viewBox="0 0 500 120" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- History / Events Section -->
+    <section class="card events-section">
+      <div class="section-header">
+        <h3>📜 Lịch sử kết nối & Cảnh báo (30 ngày)</h3>
+        <span class="badge" id="eventCountBadge">0 sự kiện</span>
+      </div>
+      <div class="table-responsive">
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>VPS</th>
+              <th>Loại sự kiện</th>
+              <th>Mức độ</th>
+              <th>Nội dung</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody">
+            <tr><td colspan="5" class="empty-state">Đang tải lịch sử sự kiện...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>VPS Monitor V1 • Kiến trúc độc lập không phụ thuộc trung tâm • Tự dọn dẹp sau 30 ngày</p>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
