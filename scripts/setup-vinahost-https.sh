@@ -127,6 +127,17 @@ EOF
 if ! nginx -t; then restore; exit 1; fi
 systemctl reload nginx
 [[ -z "$OLD_CONF" ]] || rm -f "$OLD_CONF"
+
+# Certbot renews the certificate automatically; ask Nginx to reload after
+# renewal so the renewed certificate is served without a manual restart.
+HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/vps-monitor-nginx-reload.sh" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+nginx -t && systemctl reload nginx
+HOOK
+chmod 755 "$HOOK_DIR/vps-monitor-nginx-reload.sh"
 printf '\nVinaHost HTTPS Monitor address: https://%s\n' "$DOMAIN"
 curl --max-time 12 -fsS "https://$DOMAIN/healthz" || {
  echo; echo "HTTPS vhost is installed but external connectivity still needs verification."; exit 1;
