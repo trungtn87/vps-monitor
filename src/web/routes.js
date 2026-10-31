@@ -133,8 +133,15 @@ export class HttpRouter {
       }
     }
 
-    // --- All other endpoints require Dashboard Authentication ---
-    if (!this.authGuard.isAuthorized(req)) {
+    // Public read-only dashboard is an explicit opt-in on Vibe Hosting.
+    // Mutating endpoints (heartbeat, Discord) remain independently authenticated.
+    // Public access is limited to the actual dashboard assets and read APIs.
+    const publicReadPaths = new Set([
+      '/', '/index.html', '/style.css', '/app.js',
+      '/api/status', '/api/metrics', '/api/events'
+    ]);
+    const publicRead = this.config.publicDashboard && method === 'GET' && publicReadPaths.has(pathname);
+    if (!publicRead && !this.authGuard.isAuthorized(req)) {
       res.writeHead(401, {
         'WWW-Authenticate': 'Basic realm="VPS Monitor Access"',
         'Content-Type': 'application/json'
