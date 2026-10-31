@@ -24,13 +24,13 @@ export class MonitorEvaluator {
    * @param {string} peerId 
    * @returns {{ state: string, lastReceivedAt: string|null, elapsedSec: number }}
    */
-  evaluatePeerHeartbeat(peerId) {
-    const lastHb = this.db.getLastHeartbeat(peerId);
+  async evaluatePeerHeartbeat(peerId) {
+    const lastHb = await this.db.getLastHeartbeat(peerId);
     const now = Date.now();
 
     // Check alert state table for current recorded state
     const alertKey = `${peerId}:heartbeat`;
-    const currentStateRecord = this.db.getAlertState(alertKey);
+    const currentStateRecord = await this.db.getAlertState(alertKey);
     const prevRecordedState = currentStateRecord ? currentStateRecord.current_state : NodeState.UNKNOWN;
 
     if (!lastHb || !lastHb.received_at) {
@@ -81,8 +81,8 @@ export class MonitorEvaluator {
    * @param {string} serverId 
    * @returns {{ cpuAlert: boolean, ramAlert: boolean, diskAlert: boolean, metrics: object|null }}
    */
-  evaluateResources(serverId) {
-    const metrics = this.db.getLatestMetrics(serverId);
+  async evaluateResources(serverId) {
+    const metrics = await this.db.getLatestMetrics(serverId);
     if (!metrics) {
       return { cpuAlert: false, ramAlert: false, diskAlert: false, metrics: null };
     }
