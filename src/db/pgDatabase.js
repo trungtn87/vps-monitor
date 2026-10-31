@@ -228,12 +228,28 @@ export class PgMonitorDatabase {
     return all(await this.q(`SELECT * FROM vps_monitor.alert_outbox
       WHERE status='PENDING' AND next_retry_at<=now() ORDER BY id ASC LIMIT $1`,[limit]));
   }
+  // Atomically claim work shared by VinaHost and Vibe. SKIP LOCKED
+  // prevents two dispatchers from sending the same event simultaneously.
+  // A crashed dispatcher releases its lease after 180 seconds.
+  async claimPendingAlerts(limit=10) {
+    return all(await this.q(`WITH candidates AS (
+      SELECT id FROM vps_monitor.alert_outbox
+      WHERE status IN ('PENDING','SENDING') AND next_retry_at <= now()
+      ORDER BY next_retry_at, id
+      FOR UPDATE SKIP LOCKED LIMIT $1
+    )
+    UPDATE vps_monitor.alert_outbox AS a
+    SET status='SENDING', next_retry_at=now()+interval '180 seconds'
+    WHERE a.id IN (SELECT id FROM candidates)
+    RETURNING a.*`,[limit]));
+  }
+
   async markAlertDelivered(id) {
     return this.q(`UPDATE vps_monitor.alert_outbox SET status='DELIVERED',delivered_at=now() WHERE id=$1`,[id]);
   }
   async markAlertRetry(id,attempts,nextRetrySec,error) {
     return this.q(`UPDATE vps_monitor.alert_outbox
-      SET attempts=$2,next_retry_at=now()+($3||' seconds')::interval,last_error=$4
+      SET status='PENDING',attempts=$2,next_retry_at=now()+($3||' seconds')::interval,last_error=$4
       WHERE id=$1`,[id,attempts,nextRetrySec,error||null]);
   }
   async cleanOldData(days=30) {
