@@ -440,64 +440,46 @@ export class AlertEngine {
   }
 
   /**
-   * Check VPS expiry dates (30, 15, 7, 3, 1 days & overdue)
+   * Send one Discord reminder on D-1 (Vietnam calendar day).
+   * The persisted alert key is unique per server/date, preventing repeats
+   * across the 30-second alert cycle and subsequent process restarts.
    */
   async checkExpiry() {
     const serverId = this.config.serverId;
     const expiryDate = this.config.expiryDate;
     if (!expiryDate) return;
 
-    const { daysRemaining, thresholdHit, isOverdue } = this.evaluator.evaluateExpiry(expiryDate);
-    if (thresholdHit === null || daysRemaining === null) return;
+    const { daysRemaining, thresholdHit } = this.evaluator.evaluateExpiry(expiryDate);
+    if (thresholdHit !== 1 || daysRemaining !== 1) return;
 
-    const milestoneTag = isOverdue ? 'overdue' : `${thresholdHit}d`;
-    const alertKey = `expiry:${serverId}:${expiryDate}:${milestoneTag}`;
+    const alertKey = `expiry:${serverId}:${expiryDate}:1d`;
     const recorded = await this.db.getAlertState(alertKey);
+    if (recorded?.current_state === 'ALERTED') return;
 
-    if (recorded && recorded.current_state === 'ALERTED') {
-      return;
-    }
-
-    let title, message, color;
-    if (isOverdue) {
-      title = '🚨 CẢNH BÁO KHẨN: VPS ĐÃ QUÁ HẠN!';
-      message = `🚨 VPS [${this.config.serverName}] đã QUÁ HẠN vào ngày ${expiryDate} (quá hạn ${Math.abs(daysRemaining)} ngày). Cần gia hạn ngay lập tức!`;
-      color = 0xE74C3C;
-    } else if (daysRemaining === 0) {
-      title = '⏰ ĐẾN HẠN THANH TOÁN HÔM NAY';
-      message = `⏰ Dịch vụ [${this.config.serverName}] đến hạn thanh toán vào hôm nay (${expiryDate}). Cần thanh toán hoặc gia hạn.`;
-      color = 0xE74C3C;
-    } else {
-      title = '⏰ CẢNH BÁO: VPS SẮP HẾT HẠN';
-      message = `⏰ Dịch vụ [${this.config.serverName}] đến hạn thanh toán ngày ${expiryDate} (còn ${daysRemaining} ngày). Mốc nhắc: ${thresholdHit} ngày.`;
-      color = daysRemaining <= 3 ? 0xE74C3C : 0xF1C40F;
-    }
-
+    const message = `⏰ Dịch vụ [${this.config.serverName}] sẽ đến hạn thanh toán ngày ${expiryDate} (còn 1 ngày). Vui lòng thanh toán hoặc gia hạn.`;
     const alertPayload = {
-      title,
+      title: '⏰ NHẮC THANH TOÁN TRƯỚC 1 NGÀY',
       description: message,
-      color,
+      color: 0xF1C40F,
       fields: [
-        { name: 'VPS', value: this.config.serverName, inline: true },
-        { name: 'Ngày hết hạn', value: expiryDate, inline: true },
-        { name: 'Tình trạng', value: isOverdue ? `Đã quá ${Math.abs(daysRemaining)} ngày` : (daysRemaining === 0 ? 'Đến hạn hôm nay' : `Còn lại ${daysRemaining} ngày`), inline: true }
+        { name: 'Dịch vụ', value: this.config.serverName, inline: true },
+        { name: 'Hạn thanh toán', value: expiryDate, inline: true },
+        { name: 'Còn lại', value: '1 ngày', inline: true }
       ]
     };
 
-    // Blocker 2: Atomic transition + outbox queue
     await this.db.recordAlertTransition({
       alertKey,
       currentState: 'ALERTED',
       consecutiveCount: 1,
-      details: { expiryDate, daysRemaining, milestone: milestoneTag },
+      details: { expiryDate, daysRemaining, milestone: '1d' },
       serverId,
       eventType: 'EXPIRY_WARNING',
-      severity: (daysRemaining <= 3 || isOverdue) ? 'CRITICAL' : 'WARNING',
+      severity: 'WARNING',
       message,
-      eventDetails: { expiryDate, daysRemaining, milestone: milestoneTag },
+      eventDetails: { expiryDate, daysRemaining, milestone: '1d' },
       alertPayload
     });
-
     await this.processOutbox();
   }
 }
