@@ -2,7 +2,7 @@ name: VPS Monitor CI
 
 on:
   push:
-    branches: [ main, deploy/vibe-nhanhoa ]
+    branches: [ main, deploy/vibe-nhanhoa, deploy/vinahost ]
   pull_request:
     branches: [ main ]
 
@@ -26,6 +26,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: VinaHost deployment script syntax
+        run: bash -n scripts/configure-vinahost.sh scripts/setup-vinahost-https.sh
 
       - name: Syntax and Lint Check
         run: |
