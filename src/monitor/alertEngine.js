@@ -463,9 +463,13 @@ export class AlertEngine {
       title = '🚨 CẢNH BÁO KHẨN: VPS ĐÃ QUÁ HẠN!';
       message = `🚨 VPS [${this.config.serverName}] đã QUÁ HẠN vào ngày ${expiryDate} (quá hạn ${Math.abs(daysRemaining)} ngày). Cần gia hạn ngay lập tức!`;
       color = 0xE74C3C;
+    } else if (daysRemaining === 0) {
+      title = '⏰ ĐẾN HẠN THANH TOÁN HÔM NAY';
+      message = `⏰ Dịch vụ [${this.config.serverName}] đến hạn thanh toán vào hôm nay (${expiryDate}). Cần thanh toán hoặc gia hạn.`;
+      color = 0xE74C3C;
     } else {
       title = '⏰ CẢNH BÁO: VPS SẮP HẾT HẠN';
-      message = `⏰ VPS [${this.config.serverName}] sắp hết hạn vào ngày ${expiryDate} (còn ${daysRemaining} ngày). Mốc cảnh báo: ${thresholdHit} ngày.`;
+      message = `⏰ Dịch vụ [${this.config.serverName}] đến hạn thanh toán ngày ${expiryDate} (còn ${daysRemaining} ngày). Mốc nhắc: ${thresholdHit} ngày.`;
       color = daysRemaining <= 3 ? 0xE74C3C : 0xF1C40F;
     }
 
@@ -476,7 +480,7 @@ export class AlertEngine {
       fields: [
         { name: 'VPS', value: this.config.serverName, inline: true },
         { name: 'Ngày hết hạn', value: expiryDate, inline: true },
-        { name: 'Tình trạng', value: isOverdue ? `Đã quá ${Math.abs(daysRemaining)} ngày` : `Còn lại ${daysRemaining} ngày`, inline: true }
+        { name: 'Tình trạng', value: isOverdue ? `Đã quá ${Math.abs(daysRemaining)} ngày` : (daysRemaining === 0 ? 'Đến hạn hôm nay' : `Còn lại ${daysRemaining} ngày`), inline: true }
       ]
     };
 
