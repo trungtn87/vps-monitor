@@ -186,6 +186,7 @@ export class HttpRouter {
           serverId: srv.server_id,
           name: srv.name,
           isLocal,
+          metricScope: isLocal ? this.config.metricScope : this.config.peerMetricScope,
           role: srv.role,
           connectionState,
           elapsedSec,
