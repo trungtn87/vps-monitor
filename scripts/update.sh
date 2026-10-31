@@ -55,6 +55,9 @@ if [[ ! -d "$INSTALL_DIR/.git" ]]; then
   exit 1
 fi
 
+# install.sh sets chmod +x on tracked shell scripts (100644 in Git).
+# Ignore mode-only differences; preserve/abort on actual content changes.
+git config --local core.filemode false
 git fetch origin
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 if [[ "$CURRENT_BRANCH" != "HEAD" ]]; then
