@@ -15,6 +15,15 @@ export function loadConfig(env = process.env) {
   const publicDashboard = env.PUBLIC_DASHBOARD === 'true';
   const dbBackend = env.DB_BACKEND || (vibeHosting && nodeEnv === 'production' ? 'supabase_postgres' : 'sqlite');
   const databaseUrl = env.DATABASE_URL || '';
+  // This repository's Nhân Hòa deployment belongs to account 81.
+  // Use the exact provider API observed by the owner; never browser cookies.
+  // No requests are made by unit tests or VinaHost.
+  const vibeQuotaEnabled = vibeHosting && serverId === 'nhanhoa' &&
+    nodeEnv === 'production' && env.VIBE_QUOTA_DISABLED !== 'true';
+  const vibeQuotaUserId = env.VIBE_QUOTA_USER_ID || (vibeQuotaEnabled ? '81' : '');
+  const vibeQuotaUrl = env.VIBE_QUOTA_URL || (vibeQuotaEnabled
+    ? 'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81'
+    : '');
   const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
@@ -57,9 +66,9 @@ export function loadConfig(env = process.env) {
     serverId,
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
     vibeHosting,
-    vibeQuotaUrl: env.VIBE_QUOTA_URL || '',
+    vibeQuotaUrl,
     vibeQuotaAccessToken: env.VIBE_QUOTA_ACCESS_TOKEN || '',
-    vibeQuotaUserId: env.VIBE_QUOTA_USER_ID || '',
+    vibeQuotaUserId,
     publicDashboard,
     dbBackend,
     databaseUrl,
