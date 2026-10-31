@@ -109,7 +109,13 @@ jobs:
           echo "unsigned heartbeat: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')"
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
-            psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | grep -q '^2$'
+            psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry WHERE server_id IN (\'vinahost\',\'nhanhoa\')" | grep -q '^2
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-test || true
+
       - name: Cleanup
         if: always()
         run: |
