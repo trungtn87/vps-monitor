@@ -60,6 +60,29 @@ responsible for an alert; otherwise duplicate notifications are possible.
 If Vibe does not provide a persistent volume or HTTPS reverse proxy,
 **do not try to bypass by enabling public insecure HTTP**.
 
+## Vibe startup diagnostics (when Runtime Logs are unavailable)
+
+The Vibe Docker image starts through `src/vibe/bootstrap.js`. It opens a
+small diagnostic HTTP endpoint if production startup fails before the database
+is ready. It retries the real Monitor startup every 30 seconds.
+
+- `GET /healthz` returns `200` for *process liveness*, but its JSON reports
+  `status: "DEGRADED", ready: false` until the database is connected.
+- `GET /readyz` and `GET /api/status` return `503` while degraded.
+- `GET /healthz` reports `status: "UP"` after real Monitor startup.
+- The error codes contain no passwords or PostgreSQL hostnames.
+- On Vibe Hosting use the actual **Session pooler** URI in Supabase
+  **VPS-Monitor → Connect → Session pooler (port 5432)**, with
+  `vps_monitor_app.gmpgtwtxhjwjeincvkxn` as the pooler username and the
+  dedicated role password as its password.
+- Do not use the earlier direct URI `db.gmpgtwtxhjwjeincvkxn.supabase.co`
+  on an IPv4-only host. The pooler hostname is project-specific and must be
+  copied, not computed from the region.
+
+A `DEGRADED` status is **not an operational Monitor**. Do not enable
+Discord outage alerts until `/api/status` works, real metrics reach the
+Postgres database, and peer heartbeat is verified.
+
 ## Step 4 — Build and verify (no SSH)
 
 Build and deploy the NEW application through Vibe's GitHub UI. Open the
