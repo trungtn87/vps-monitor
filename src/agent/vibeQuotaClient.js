@@ -55,7 +55,7 @@ export class VibeQuotaClient {
     if (parsed.origin !== ORIGIN || parsed.protocol !== 'https:' ||
         parsed.pathname !== ENDPOINT_PATH || parsed.username ||
         parsed.password || parsed.hash ||
-        parsed.searchParams.size !== 1 || !/^\\d+$/.test(parsed.searchParams.get('userId') || '')) {
+        parsed.searchParams.size !== 1 || !/^[0-9]+$/.test(parsed.searchParams.get('userId') || '')) {
       throw new Error('VIBE_QUOTA_URL must use the exact Vibe stats/poll HTTPS endpoint with only userId');
     }
     if (String(parsed.searchParams.get('userId')) !== String(expectedUserId)) {
