@@ -81,6 +81,11 @@ shopt -s dotglob
 cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
 shopt -u dotglob
 
+# Installer makes shell scripts executable, but repository blobs are
+# committed as 100644; prevent chmod-only changes from dirtying Git working tree.
+if [[ -d "$INSTALL_DIR/.git" ]] && command -v git >/dev/null 2>&1; then
+  git -C "$INSTALL_DIR" config --local core.filemode false
+fi
 # Ensure scripts have execute permissions
 chmod +x "$INSTALL_DIR"/scripts/*.sh 2>/dev/null || true
 chmod +x "$INSTALL_DIR"/ops/scripts/*.sh 2>/dev/null || true
