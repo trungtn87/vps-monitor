@@ -8,6 +8,7 @@ import { PgMonitorDatabase } from './db/pgDatabase.js';
 import { SystemCollector } from './agent/collector.js';
 import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
 import { VibeQuotaClient } from './agent/vibeQuotaClient.js';
+import { AutoTradeContainerClient, composeVibeContainerSum } from './agent/autoTradeContainerClient.js';
 import { AppHealthChecker } from './agent/appHealth.js';
 import { HeartbeatClient } from './monitor/heartbeatClient.js';
 import { HeartbeatReceiver } from './monitor/heartbeatReceiver.js';
@@ -69,6 +70,9 @@ export async function createServer(customEnv = null) {
 
   // 4. Initialize Components
   const collector = config.vibeHosting ? new VibeContainerCollector() : new SystemCollector();
+  // Nhân Hòa's two independent Vibe apps; read-only, fixed public HTTPS URL.
+  const autoTradeUsageClient = config.vibeHosting && config.serverId === 'nhanhoa'
+    ? new AutoTradeContainerClient() : null;
   const appChecker = new AppHealthChecker(
     config.appServiceId,
     config.appServiceName,
@@ -261,6 +265,27 @@ export async function createServer(customEnv = null) {
         lastCheck: new Date().toISOString(),
         lastError: appRes.error
       });
+
+      // Failed/missing samples do not overwrite the last valid aggregate.
+      // The UI marks the last valid record stale after 180 seconds.
+      if (autoTradeUsageClient) {
+        try {
+          const remote = await autoTradeUsageClient.read();
+          const local = {
+            name:'VPS Monitor',appId:'vps-monitor',
+            cpuVcpu:Math.round(metrics.cpuPct*1000)/100000,
+            ramUsedMb:metrics.ramUsedMb,
+            ramLimitMb:metrics.ramTotalMb>0 ? metrics.ramTotalMb : null,
+            sourceCpu:'PROCESS',sourceRam:metrics.ramTotalMb>0?'CGROUP_V2':'PROCESS',
+            sampledAt:new Date().toISOString()
+          };
+          const total=composeVibeContainerSum(local,remote);
+          await db.insertVibeContainerSum(config.serverId,total);
+        } catch (err) {
+          logger.warn('AutoTrade container usage unavailable: '+
+            String(err.message).replace(/[^A-Za-z0-9_ ]/g,'').slice(0,70));
+        }
+      }
     } catch (err) {
       logger.error('Error during local agent collection cycle:', err);
     }
