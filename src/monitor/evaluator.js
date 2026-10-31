@@ -24,13 +24,13 @@ export class MonitorEvaluator {
    * @param {string} peerId 
    * @returns {{ state: string, lastReceivedAt: string|null, elapsedSec: number }}
    */
-  evaluatePeerHeartbeat(peerId) {
-    const lastHb = this.db.getLastHeartbeat(peerId);
+  async evaluatePeerHeartbeat(peerId) {
+    const lastHb = await this.db.getLastHeartbeat(peerId);
     const now = Date.now();
 
     // Check alert state table for current recorded state
     const alertKey = `${peerId}:heartbeat`;
-    const currentStateRecord = this.db.getAlertState(alertKey);
+    const currentStateRecord = await this.db.getAlertState(alertKey);
     const prevRecordedState = currentStateRecord ? currentStateRecord.current_state : NodeState.UNKNOWN;
 
     if (!lastHb || !lastHb.received_at) {
@@ -81,8 +81,8 @@ export class MonitorEvaluator {
    * @param {string} serverId 
    * @returns {{ cpuAlert: boolean, ramAlert: boolean, diskAlert: boolean, metrics: object|null }}
    */
-  evaluateResources(serverId) {
-    const metrics = this.db.getLatestMetrics(serverId);
+  async evaluateResources(serverId) {
+    const metrics = await this.db.getLatestMetrics(serverId);
     if (!metrics) {
       return { cpuAlert: false, ramAlert: false, diskAlert: false, metrics: null };
     }
@@ -96,34 +96,37 @@ export class MonitorEvaluator {
   }
 
   /**
-   * Evaluate VPS expiration date
+   * Evaluate billing date; only a D-1 reminder is actionable
    * @param {string} expiryDateStr - YYYY-MM-DD
    * @returns {{ daysRemaining: number|null, thresholdHit: number|string|null, isOverdue: boolean }}
    */
-  evaluateExpiry(expiryDateStr) {
-    if (!expiryDateStr) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
-
-    const expiryTime = new Date(expiryDateStr + 'T23:59:59Z').getTime();
-    if (isNaN(expiryTime)) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
-
-    const now = Date.now();
-    const diffMs = expiryTime - now;
-    const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    const isOverdue = daysRemaining <= 0;
-
-    let thresholdHit = null;
-    if (isOverdue) {
-      thresholdHit = 0; // Overdue milestone
-    } else {
-      const thresholds = [1, 3, 7, 15, 30];
-      for (const t of thresholds) {
-        if (daysRemaining <= t) {
-          thresholdHit = t;
-          break;
-        }
-      }
+  evaluateExpiry(expiryDateStr, nowMs = Date.now()) {
+    if (typeof expiryDateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expiryDateStr)) {
+      return { daysRemaining: null, thresholdHit: null, isOverdue: false };
+    }
+    const [y, m, d] = expiryDateStr.split('-').map(Number);
+    const expiryUTC = Date.UTC(y, m - 1, d);
+    // Reject nonexistent calendar dates instead of normalizing (e.g. Feb 30).
+    if (!Number.isFinite(expiryUTC) ||
+        new Date(expiryUTC).toISOString().slice(0, 10) !== expiryDateStr) {
+      return { daysRemaining: null, thresholdHit: null, isOverdue: false };
     }
 
+    // Billing deadlines are calendar dates in Vietnam, not UTC timestamps.
+    // Comparing UTC midnight representations of LOCAL dates avoids DST/rounding
+    // drift near midnight and counts the due date as 0 (not overdue).
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date(nowMs));
+    const v = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const todayUTC = Date.UTC(Number(v.year), Number(v.month) - 1, Number(v.day));
+    const daysRemaining = Math.round((expiryUTC - todayUTC) / 86400000);
+    const isOverdue = daysRemaining < 0;
+
+    // One single reminder, exactly one Vietnam calendar day before payment.
+    // No reminders on the due date, after the due date, or at earlier milestones.
+    const thresholdHit = daysRemaining === 1 ? 1 : null;
     return { daysRemaining, thresholdHit, isOverdue };
   }
 }

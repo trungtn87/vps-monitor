@@ -31,7 +31,7 @@ export class HeartbeatReceiver {
    * @param {string} signature 
    * @returns {{ valid: boolean, code: number, reason: string }}
    */
-  processHeartbeat(payload, signature) {
+  async processHeartbeat(payload, signature) {
     this._cleanupNonces();
 
     if (!payload || typeof payload !== 'object') {
@@ -53,7 +53,7 @@ export class HeartbeatReceiver {
     const isSigValid = verifyHeartbeat(payload, signature, this.heartbeatSecret);
     if (!isSigValid) {
       logger.warn(`Heartbeat rejected from ${senderId}: invalid signature`);
-      this.db.recordHeartbeat({
+      await this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence: sequence || 0,
@@ -66,7 +66,7 @@ export class HeartbeatReceiver {
     // 2. Verify timestamp window (<= 300s clock drift)
     if (!isTimestampValid(timestamp, 300)) {
       logger.warn(`Heartbeat rejected from ${senderId}: timestamp expired or excessive clock drift`);
-      this.db.recordHeartbeat({
+      await this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence,
@@ -79,7 +79,7 @@ export class HeartbeatReceiver {
     // 3. Verify nonce for replay protection
     if (this.seenNonces.has(nonce)) {
       logger.warn(`Heartbeat rejected from ${senderId}: replayed nonce ${nonce}`);
-      this.db.recordHeartbeat({
+      await this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence,
@@ -95,7 +95,7 @@ export class HeartbeatReceiver {
     const latencyMs = Math.max(0, Date.now() - senderMs);
 
     // Record valid heartbeat in database
-    this.db.recordHeartbeat({
+    await this.db.recordHeartbeat({
       senderId,
       receiverId: this.serverId,
       sequence,
@@ -107,7 +107,7 @@ export class HeartbeatReceiver {
     // Record peer metrics if provided
     if (metrics && typeof metrics === 'object') {
       try {
-        this.db.insertMetrics({
+        await this.db.insertMetrics({
           serverId: senderId,
           cpuPct: metrics.cpuPct || 0,
           ramUsedMb: metrics.ramUsedMb || 0,
@@ -123,7 +123,7 @@ export class HeartbeatReceiver {
 
         // If peer provided app status, update service registry
         if (metrics.appService) {
-          this.db.upsertService({
+          await this.db.upsertService({
             serviceId: metrics.appService.serviceId,
             serverId: senderId,
             name: metrics.appService.name,

@@ -103,7 +103,7 @@ export class HttpRouter {
           return this._sendError(res, 400, 'Invalid JSON payload');
         }
 
-        const result = this.heartbeatReceiver.processHeartbeat(payload, signature);
+        const result = await this.heartbeatReceiver.processHeartbeat(payload, signature);
         return this._sendJson(res, result.code, { status: result.reason });
       } catch (err) {
         logger.error('Error handling heartbeat request:', err);
@@ -121,7 +121,7 @@ export class HttpRouter {
       const ts = req.headers['x-signature-timestamp'] || '';
       try {
         const rawBody = await this._readBody(req);
-        const result = this.discordInteractions.handle(rawBody, sig, ts);
+        const result = await this.discordInteractions.handle(rawBody, sig, ts);
         if (typeof result.body === 'string') {
           res.writeHead(result.status, { 'Content-Type': 'text/plain' });
           return res.end(result.body);
@@ -133,8 +133,15 @@ export class HttpRouter {
       }
     }
 
-    // --- All other endpoints require Dashboard Authentication ---
-    if (!this.authGuard.isAuthorized(req)) {
+    // Public read-only dashboard is an explicit opt-in on Vibe Hosting.
+    // Mutating endpoints (heartbeat, Discord) remain independently authenticated.
+    // Public access is limited to the actual dashboard assets and read APIs.
+    const publicReadPaths = new Set([
+      '/', '/index.html', '/style.css', '/app.js',
+      '/api/status', '/api/metrics', '/api/events'
+    ]);
+    const publicRead = this.config.publicDashboard && method === 'GET' && publicReadPaths.has(pathname);
+    if (!publicRead && !this.authGuard.isAuthorized(req)) {
       res.writeHead(401, {
         'WWW-Authenticate': 'Basic realm="VPS Monitor Access"',
         'Content-Type': 'application/json'
@@ -144,22 +151,36 @@ export class HttpRouter {
 
     // 4. API Status Overview
     if (pathname === '/api/status' && method === 'GET') {
-      const servers = this.db.getAllServers();
-      const statusList = servers.map(srv => {
+      const servers = await this.db.getAllServers();
+      const statusList = await Promise.all(servers.map(async srv => {
         const isLocal = srv.server_id === this.config.serverId;
         let connectionState = NodeState.ONLINE;
         let elapsedSec = 0;
         let lastReceivedAt = null;
 
         if (!isLocal) {
-          const evalRes = this.evaluator.evaluatePeerHeartbeat(srv.server_id);
+          const evalRes = await this.evaluator.evaluatePeerHeartbeat(srv.server_id);
           connectionState = evalRes.state;
           elapsedSec = evalRes.elapsedSec;
           lastReceivedAt = evalRes.lastReceivedAt;
         }
 
-        const latestMetrics = this.db.getLatestMetrics(srv.server_id);
-        const services = this.db.getServicesByServer(srv.server_id);
+        const latestMetrics = await this.db.getLatestMetrics(srv.server_id);
+        const hostingQuota = isLocal && this.config.vibeHosting && this.db.getLatestHostingQuota
+          ? await this.db.getLatestHostingQuota(srv.server_id) : null;
+        // Cross-node: both UIs read one shared aggregate of the two Vibe apps.
+        // NEVER substitute it for provider-wide hosting quota metrics.
+        const containerTotals = srv.server_id === 'nhanhoa' &&
+          this.db.getLatestVibeContainerSum
+          ? await this.db.getLatestVibeContainerSum(srv.server_id) : null;
+        if (containerTotals) {
+          containerTotals.cpuQuotaVcpu = this.config.vibePlanCpuVcpu;
+          containerTotals.ramQuotaMb = this.config.vibePlanRamMb;
+          containerTotals.cpuPct = containerTotals.cpuUsedVcpu === null ? null
+            : 100 * containerTotals.cpuUsedVcpu / this.config.vibePlanCpuVcpu;
+          containerTotals.ramPct = 100 * containerTotals.ramUsedMb / this.config.vibePlanRamMb;
+        }
+        const services = await this.db.getServicesByServer(srv.server_id);
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
 
@@ -186,6 +207,9 @@ export class HttpRouter {
           serverId: srv.server_id,
           name: srv.name,
           isLocal,
+          metricScope: isLocal ? this.config.metricScope : this.config.peerMetricScope,
+          hostingQuota,
+          containerTotals,
           role: srv.role,
           connectionState,
           elapsedSec,
@@ -221,7 +245,7 @@ export class HttpRouter {
             lastError: s.last_error
           }))
         };
-      });
+      }));
 
       return this._sendJson(res, 200, {
         localServerId: this.config.serverId,
@@ -234,14 +258,35 @@ export class HttpRouter {
     if (pathname === '/api/metrics' && method === 'GET') {
       const serverId = url.searchParams.get('server') || this.config.serverId;
       const limit = Math.min(300, parseInt(url.searchParams.get('limit') || '60', 10));
-      const metrics = this.db.getMetricsHistory(serverId, limit);
-      return this._sendJson(res, 200, { serverId, metrics });
+      // Match chart provenance to the card: when Hosting-wide data is live,
+      // chart account CPU/RAM rather than mixing in container-only history.
+      if (this.config.vibeHosting && serverId === this.config.serverId &&
+          this.db.getLatestHostingQuota && this.db.getHostingQuotaHistory) {
+        const latestQuota = await this.db.getLatestHostingQuota(serverId);
+        if (latestQuota && !latestQuota.isStale) {
+          const metrics = await this.db.getHostingQuotaHistory(serverId, limit);
+          return this._sendJson(res, 200, { serverId, metricScope: 'VIBE_HOSTING_ACCOUNT', metrics });
+        }
+      }
+      if (serverId === 'nhanhoa' && this.db.getLatestVibeContainerSum &&
+          this.db.getVibeContainerSumHistory) {
+        const sum = await this.db.getLatestVibeContainerSum(serverId);
+        if (sum && !sum.isStale) {
+          const metrics=await this.db.getVibeContainerSumHistory(
+            serverId,limit,this.config.vibePlanCpuVcpu,this.config.vibePlanRamMb);
+          if (metrics.length>0) return this._sendJson(res,200,{
+            serverId,metricScope:'VIBE_APPLICATIONS_ONLY',metrics
+          });
+        }
+      }
+      const metrics = await this.db.getMetricsHistory(serverId, limit);
+      return this._sendJson(res, 200, { serverId, metricScope: 'CONTAINER', metrics });
     }
 
     // 6. API Events History
     if (pathname === '/api/events' && method === 'GET') {
       const limit = Math.min(100, parseInt(url.searchParams.get('limit') || '50', 10));
-      const events = this.db.getRecentEvents(limit);
+      const events = await this.db.getRecentEvents(limit);
       return this._sendJson(res, 200, { events });
     }
 
