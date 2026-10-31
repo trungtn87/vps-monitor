@@ -3,8 +3,13 @@
 # Run only after localhost health check passes.
 set -euo pipefail
 [[ "$EUID" -eq 0 ]] || { echo "Run as root"; exit 1; }
-DOMAIN="monitor.103.9.78.67.sslip.io"
-PUBLIC_IPV4="103.9.78.67"
+DOMAIN="${1:-}"
+[[ -n "$DOMAIN" && "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || {
+  echo "Usage: bash scripts/setup-vinahost-https.sh <domain-pointing-to-this-VPS>"
+  exit 1
+}
+# Determine this VPS' actual public IPv4, never assume an address from examples.
+PUBLIC_IPV4="$(curl --max-time 7 -fsS --ipv4 https://api.ipify.org)"
 NAME="vps-monitor"
 SITES_AVAILABLE="/etc/nginx/sites-available"
 SITES_ENABLED="/etc/nginx/sites-enabled"
