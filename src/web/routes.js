@@ -168,6 +168,18 @@ export class HttpRouter {
         const latestMetrics = await this.db.getLatestMetrics(srv.server_id);
         const hostingQuota = isLocal && this.config.vibeHosting && this.db.getLatestHostingQuota
           ? await this.db.getLatestHostingQuota(srv.server_id) : null;
+        // Cross-node: both UIs read one shared aggregate of the two Vibe apps.
+        // NEVER substitute it for provider-wide hosting quota metrics.
+        const containerTotals = srv.server_id === 'nhanhoa' &&
+          this.db.getLatestVibeContainerSum
+          ? await this.db.getLatestVibeContainerSum(srv.server_id) : null;
+        if (containerTotals) {
+          containerTotals.cpuQuotaVcpu = this.config.vibePlanCpuVcpu;
+          containerTotals.ramQuotaMb = this.config.vibePlanRamMb;
+          containerTotals.cpuPct = containerTotals.cpuUsedVcpu === null ? null
+            : 100 * containerTotals.cpuUsedVcpu / this.config.vibePlanCpuVcpu;
+          containerTotals.ramPct = 100 * containerTotals.ramUsedMb / this.config.vibePlanRamMb;
+        }
         const services = await this.db.getServicesByServer(srv.server_id);
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
@@ -197,6 +209,7 @@ export class HttpRouter {
           isLocal,
           metricScope: isLocal ? this.config.metricScope : this.config.peerMetricScope,
           hostingQuota,
+          containerTotals,
           role: srv.role,
           connectionState,
           elapsedSec,
@@ -253,6 +266,17 @@ export class HttpRouter {
         if (latestQuota && !latestQuota.isStale) {
           const metrics = await this.db.getHostingQuotaHistory(serverId, limit);
           return this._sendJson(res, 200, { serverId, metricScope: 'VIBE_HOSTING_ACCOUNT', metrics });
+        }
+      }
+      if (serverId === 'nhanhoa' && this.db.getLatestVibeContainerSum &&
+          this.db.getVibeContainerSumHistory) {
+        const sum = await this.db.getLatestVibeContainerSum(serverId);
+        if (sum && !sum.isStale) {
+          const metrics=await this.db.getVibeContainerSumHistory(
+            serverId,limit,this.config.vibePlanCpuVcpu,this.config.vibePlanRamMb);
+          if (metrics.length>0) return this._sendJson(res,200,{
+            serverId,metricScope:'VIBE_APPLICATIONS_ONLY',metrics
+          });
         }
       }
       const metrics = await this.db.getMetricsHistory(serverId, limit);
