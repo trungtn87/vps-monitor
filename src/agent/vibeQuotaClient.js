@@ -1,7 +1,8 @@
 // Optional read-only Nhân Hòa Vibe Hosting account quota source.
 // This endpoint belongs to the hosting control plane and is NOT Linux host metrics.
 // Never send Vibe cookies or credentials to the public Dashboard.
-const ORIGIN = 'https://vibe.nhanhoa.com';
+const ORIGIN = 'https://vibe-api3.nhanhoa.com:8443';
+const ENDPOINT_PATH = '/api/vibe/stats/poll';
 
 function finitePositive(n, name, allowZero = true) {
   if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || (!allowZero && n === 0)) {
@@ -52,8 +53,13 @@ export class VibeQuotaClient {
     if (!url) throw new Error('VIBE_QUOTA_URL is required');
     const parsed = new URL(url);
     if (parsed.origin !== ORIGIN || parsed.protocol !== 'https:' ||
-        parsed.username || parsed.password || parsed.hash) {
-      throw new Error('VIBE_QUOTA_URL must use the official HTTPS Vibe Hosting origin');
+        parsed.pathname !== ENDPOINT_PATH || parsed.username ||
+        parsed.password || parsed.hash ||
+        parsed.searchParams.size !== 1 || !/^\\d+$/.test(parsed.searchParams.get('userId') || '')) {
+      throw new Error('VIBE_QUOTA_URL must use the exact Vibe stats/poll HTTPS endpoint with only userId');
+    }
+    if (String(parsed.searchParams.get('userId')) !== String(expectedUserId)) {
+      throw new Error('VIBE_QUOTA_ACCOUNT_MISMATCH');
     }
     this.url = parsed.href;
     this.token = token || '';
