@@ -105,37 +105,32 @@ test('MonitorEvaluator evaluateResources checks thresholds', async () => {
   db.close();
 });
 
-test('Billing dates use Vietnam calendar, including today and overdue', () => {
+test('Only the day before a billing deadline triggers a reminder, by Vietnam date', () => {
   const db = new MonitorDatabase(':memory:');
   const evaluator = new MonitorEvaluator({ db, config: {} });
   const clock = Date.parse('2026-10-31T17:00:00Z'); // 2026-11-01 00:00 ICT
 
-  for (const [date, expectedHit, expectedDays, overdue] of [
-    ['2026-12-16', null, 45, false],
-    ['2026-12-01', 30, 30, false],
-    ['2026-11-30', 30, 29, false], // Nhân Hòa Vibe payment due
-    ['2026-11-16', 15, 15, false],
-    ['2026-11-08', 7, 7, false],
-    ['2026-11-04', 3, 3, false],
-    ['2026-11-02', 1, 1, false],
-    ['2026-11-01', 0, 0, false],
-    ['2026-10-31', 0, -1, true],
-    ['2027-01-12', null, 72, false] // VinaHost next payment
+  for (const [date, days, triggered] of [
+    ['2026-12-16', 45, false],
+    ['2026-12-01', 30, false],
+    ['2026-11-30', 29, false], // Nhân Hòa renewal
+    ['2026-11-16', 15, false],
+    ['2026-11-08', 7, false],
+    ['2026-11-04', 3, false],
+    ['2026-11-02', 1, true],
+    ['2026-11-01', 0, false],
+    ['2026-10-31', -1, false],
+    ['2027-01-12', 72, false] // VinaHost renewal
   ]) {
     const result = evaluator.evaluateExpiry(date, clock);
-    assert.strictEqual(result.thresholdHit, expectedHit, date);
-    assert.strictEqual(result.daysRemaining, expectedDays, date);
-    assert.strictEqual(result.isOverdue, overdue, date);
+    assert.strictEqual(result.daysRemaining, days, date);
+    assert.strictEqual(result.thresholdHit, triggered ? 1 : null, date);
   }
 
-  // 23:59:59 local on Nov 1 is still one day before Nov 2.
-  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T16:59:59Z')).daysRemaining, 1);
-  // Exactly 00:00:00 local on Nov 2 is due today, NOT overdue.
-  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T17:00:00Z')).daysRemaining, 0);
-  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T17:00:00Z')).isOverdue, false);
-  // Tomorrow becomes overdue by one calendar day.
-  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-02T17:00:00Z')).daysRemaining, -1);
-
+  // Same day, regardless of UTC: do not warn early or late.
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T16:59:59Z')).thresholdHit, 1);
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-01T17:00:00Z')).thresholdHit, null);
+  assert.strictEqual(evaluator.evaluateExpiry('2026-11-02', Date.parse('2026-11-02T17:00:00Z')).thresholdHit, null);
   assert.strictEqual(evaluator.evaluateExpiry('2026-02-30', clock).daysRemaining, null);
   assert.strictEqual(evaluator.evaluateExpiry('11/30/2026', clock).daysRemaining, null);
   db.close();
