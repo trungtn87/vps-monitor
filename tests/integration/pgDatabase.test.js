@@ -20,6 +20,20 @@ test('real PostgreSQL adapter preserves metrics and atomic alert outbox across r
       ramPct: 50, diskUsedGb: 1, diskTotalGb: 2, diskPct: 50,
       netRxBytes: 42, netTxBytes: 21, uptimeSec: 360
     });
+    await d.insertHostingQuota('pg-ci-monitor', {
+      snapshotAt: new Date().toISOString(),
+      cpuUsedVcpu:0.0129,cpuQuotaVcpu:1,cpuPct:1.29,
+      ramUsedMb:146.07,ramQuotaMb:2048,ramPct:7.1,
+      diskUsedMb:1.69,diskQuotaMb:3072,diskPct:0.1,
+      apps:[{name:'autotrade',cpuVcpu:0.0129,ramMb:120.7,ramLimitMb:1024}]
+    });
+    const quota = await d.getLatestHostingQuota('pg-ci-monitor');
+    assert.equal(quota.scope,'VIBE_HOSTING_ACCOUNT');
+    assert.equal(quota.cpuUsedVcpu,0.0129);
+    assert.equal(quota.ramQuotaMb,2048);
+    const quotaHistory = await d.getHostingQuotaHistory('pg-ci-monitor',20);
+    assert.ok(quotaHistory.length >= 1);
+    assert.equal(quotaHistory.at(-1).cpu_pct,1.29);
     await d.recordHeartbeat({
       senderId: 'pg-ci-peer', receiverId: 'pg-ci-monitor', sequence: 1,
       senderTimestamp: new Date().toISOString(), status: 'VALID'
@@ -56,6 +70,7 @@ test('real PostgreSQL adapter preserves metrics and atomic alert outbox across r
   try {
     assert.equal((await reopened.getAlertState('pg-ci-atomic-1')).current_state, 'DISCONNECTED');
     assert.equal((await reopened.getLatestMetrics('pg-ci-monitor')).cpu_pct, 15);
+    assert.equal((await reopened.getLatestHostingQuota('pg-ci-monitor')).cpuPct,1.29);
     await reopened.cleanOldData(30);
   } finally { await reopened.close(); }
 });
