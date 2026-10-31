@@ -1,5 +1,3 @@
-> **BLOCKED: Supabase PostgreSQL migration pending.** The current runtime in this branch still uses SQLite and is NOT READY for production Vibe deployment. Owner requires a separate Supabase project/database, not a local SQLite volume or AutoTrade's Supabase project. A draft private SQL schema is in `supabase/monitor_schema.sql`; it has NOT been applied to any database. Do not deploy until PostgreSQL adapter + migrations + CI verify read/write/restart.
-
 # Nhân Hòa Vibe Hosting — GitHub/Docker deployment
 
 ## Scope
@@ -27,9 +25,9 @@ interpret these as full VPS values or use them for host-level capacity alerts.
   through Vibe's authenticated HTTPS domain routing. `TRUSTED_PLATFORM_PROXY=true`
   acknowledges this platform boundary; it does not itself create encryption.
 
-## Step 2 — Persistent data (important)
+## Step 2 — Separate Supabase PostgreSQL
 
-**Superseded:** Supabase PostgreSQL is required. The monitor must have a dedicated Supabase project and a private `vps_monitor` schema. The old SQLite-only design and persistent volume requirement must be removed after the PostgreSQL adapter is implemented. No changes to AutoTrade's data/storage/database are permitted.
+Use `DB_BACKEND=supabase_postgres` and the dedicated project connection string in the Vibe Environment panel. No SQLite/volume fallback. Do not use AutoTrade credentials.
 
 ## Step 3 — Environment variables
 
@@ -40,7 +38,7 @@ Required for production:
 - `NODE_ENV=production`
 - `VIBE_HOSTING=true`, `TRUSTED_PLATFORM_PROXY=true`
 - `SERVER_ID=nhanhoa`, `HOST=0.0.0.0`, `PORT=3000`, `REQUIRE_TLS=false`
-- `DB_PATH=/data/vps-monitor.db` (Monitor-only persistent volume required)
+- `DB_BACKEND=supabase_postgres` + `DATABASE_URL` dedicated to project `gmpgtwtxhjwjeincvkxn`
 - `HEARTBEAT_SECRET` = one unique random secret (>=32 characters), **identical
   on VinaHost**. Do not paste it into tickets or chats.
 - `PUBLIC_DASHBOARD=true` permits anonymous **GET-only** access to Dashboard files,
@@ -74,8 +72,8 @@ generated HTTPS app domain:
 - Local Nhân Hòa resource origin must be marked as `CONTAINER`, not `HOST`;
   disk must appear as `N/A`.
 - Peer can be `UNKNOWN` until VinaHost is online and configured.
-- Rebuild/redeploy once and confirm metrics/history retained (requires volume).
-- Check that the Monitor created `/data/vps-monitor.db` in its **own** volume; do not point it at the AutoTrade database.
+- Rebuild/redeploy once and confirm history remains in Supabase PostgreSQL.
+- Verify new rows in Supabase project `VPS-Monitor`, schema `vps_monitor` (not AutoTrade).
 
 If only container metrics are available, that is a platform limitation, not a
 VPS failure. To obtain whole-host metrics in the future, obtain an official
@@ -99,6 +97,6 @@ automatically fail over to the other node.
 ## Limits
 - No SSH/root access into Nhân Hòa hosting machine.
 - No host-level CPU/RAM/disk/uptime from Vibe.
-- SQLite needs a confirmed persistent volume.
+- Monitor relies on a distinct Supabase PostgreSQL project; uptime and Free-plan pausing limits apply.
 - No automatic failover/HA or control over the production applications.
 - No changes to `main` until PR review.
