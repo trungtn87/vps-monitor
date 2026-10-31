@@ -24,6 +24,9 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
       - name: Syntax and Lint Check
         run: |
           node --check src/server.js src/db/*.js src/common/*.js src/agent/*.js src/monitor/*.js src/discord/*.js src/web/*.js
