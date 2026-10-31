@@ -97,7 +97,14 @@ export function loadConfig(env = process.env) {
     // App Health Endpoint (local service on this VPS)
     appServiceId: env.APP_SERVICE_ID || (isVinaHost ? '11ship' : 'autotrade'),
     appServiceName: env.APP_SERVICE_NAME || (isVinaHost ? '11Ship Backend' : 'AutoTrade Bot'),
-    appHealthUrl: env.APP_HEALTH_URL || '',
+    // The existing AutoTrade Vibe app is a separate deployed container.
+    // Check the engine's real data readiness rather than just dashboard HTTP.
+    // An explicit APP_HEALTH_URL (including empty via APP_HEALTH_DISABLED=true)
+    // always takes priority over the known Vibe default.
+    appHealthUrl: env.APP_HEALTH_DISABLED === 'true' ? ''
+      : (env.APP_HEALTH_URL || (vibeHosting && serverId === 'nhanhoa'
+        ? 'https://vibetpmzwpxt5.vibe3.vnws.com/engine/health'
+        : '')),
     
     // Expiry dates (manually configured, YYYY-MM-DD)
     expiryDate: env.EXPIRY_DATE || '',
