@@ -110,14 +110,39 @@ jobs:
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
             psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | awk '$1 >= 2 { found=1 } END { exit !found }'
+      - name: Start diagnostic mode with intentionally missing credentials
+        run: |
+          docker run -d --name vps-monitor-vibe-diagnostic --network host \
+            -e NODE_ENV=production \
+            -e VIBE_HOSTING=true \
+            -e TRUSTED_PLATFORM_PROXY=true \
+            -e PUBLIC_DASHBOARD=true \
+            -e HOST=0.0.0.0 \
+            -e PORT=13001 \
+            vps-monitor-vibe-test
+      - name: Verify 502 is replaced by safe startup diagnostics
+        run: |
+          set -eu
+          for n in $(seq 1 20); do
+            code="$(curl -s -o /tmp/vibe-diag.json -w '%{http_code}' http://127.0.0.1:13001/healthz || true)"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 1
+          done
+          [ "$code" = "200" ]
+          grep -q '"status":"DEGRADED"' /tmp/vibe-diag.json
+          grep -q '"errorCode":"HEARTBEAT_SECRET_MISSING"' /tmp/vibe-diag.json
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13001/api/status)" = "503" ]
+          ! grep -qi 'password' /tmp/vibe-diag.json
       - name: Cleanup
         if: always()
         run: |
           docker logs vps-monitor-vibe-test || true
           docker rm -f vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-diagnostic || true
 
       - name: Cleanup
         if: always()
         run: |
           docker logs vps-monitor-vibe-test || true
           docker rm -f vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-diagnostic || true
