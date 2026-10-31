@@ -21,5 +21,8 @@
     "autotrade"
   ],
   "author": "trungtn87",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "pg": "8.16.3"
+  }
 }
