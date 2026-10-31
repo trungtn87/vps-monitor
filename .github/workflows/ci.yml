@@ -100,10 +100,13 @@ jobs:
             sleep 1
           done
           if [ "$ready" -ne 1 ]; then docker logs vps-monitor-vibe-test; exit 1; fi
+          curl -sS -o /tmp/monitor-status.json -w 'status HTTP %{http_code}\\n' http://127.0.0.1:3000/api/status
+          cat /tmp/monitor-status.json
+          grep -q '"nhanhoa"' /tmp/monitor-status.json
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/status)" = "200" ]
-          curl -fsS http://127.0.0.1:3000/api/status | grep -q '"nhanhoa"'
+          echo "POST status: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/status)"
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/status)" = "401" ]
-          # Unsupported unsigned heartbeats cannot be ingested.
+          echo "unsigned heartbeat: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')"
           [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
             psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | grep -q '^2$'
