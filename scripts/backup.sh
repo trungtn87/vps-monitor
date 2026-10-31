@@ -5,7 +5,7 @@
 # ==============================================================================
 set -euo pipefail
 
-INSTALL_DIR="/opt/vps-monitor"
+INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
 DB_FILE="$INSTALL_DIR/data/monitor.db"
 BACKUP_DIR="${1:-$INSTALL_DIR/backups}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

@@ -163,6 +163,25 @@ export class HttpRouter {
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
 
+        // Blocker 4: Check if metrics are stale (> 180s without new samples)
+        let metricsAgeSec = null;
+        let isMetricsStale = false;
+        if (latestMetrics && latestMetrics.created_at) {
+          const rawDate = latestMetrics.created_at;
+          const metricTime = new Date(rawDate.includes('T') ? rawDate : rawDate.replace(' ', 'T') + 'Z').getTime();
+          metricsAgeSec = Math.max(0, Math.floor((Date.now() - metricTime) / 1000));
+          if (metricsAgeSec > (this.config.disconnectThresholdSec || 180)) {
+            isMetricsStale = true;
+          }
+        } else {
+          isMetricsStale = true;
+        }
+
+        // If local agent stopped collecting, node health is STALE/DEGRADED
+        if (isLocal && isMetricsStale) {
+          connectionState = 'STALE';
+        }
+
         return {
           serverId: srv.server_id,
           name: srv.name,
@@ -173,6 +192,12 @@ export class HttpRouter {
           lastHeartbeatAt: lastReceivedAt,
           expiryDate: expiry || null,
           daysRemaining: expiryEval.daysRemaining,
+          agentHealth: {
+            status: isMetricsStale ? 'STALE' : 'HEALTHY',
+            isStale: isMetricsStale,
+            ageSec: metricsAgeSec,
+            lastCollectedAt: latestMetrics ? latestMetrics.created_at : null
+          },
           metrics: latestMetrics ? {
             cpuPct: latestMetrics.cpu_pct,
             ramUsedMb: latestMetrics.ram_used_mb,
@@ -184,7 +209,9 @@ export class HttpRouter {
             netRxBytes: latestMetrics.net_rx_bytes,
             netTxBytes: latestMetrics.net_tx_bytes,
             uptimeSec: latestMetrics.uptime_sec,
-            updatedAt: latestMetrics.created_at
+            updatedAt: latestMetrics.created_at,
+            ageSec: metricsAgeSec,
+            isStale: isMetricsStale
           } : null,
           services: services.map(s => ({
             serviceId: s.service_id,

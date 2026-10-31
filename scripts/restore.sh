@@ -16,7 +16,7 @@ if [[ -z "$BACKUP_FILE" || ! -f "$BACKUP_FILE" ]]; then
   exit 1
 fi
 
-INSTALL_DIR="/opt/vps-monitor"
+INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
 DB_FILE="$INSTALL_DIR/data/monitor.db"
 
 echo "===> Restoring database from $BACKUP_FILE..."
@@ -28,7 +28,9 @@ rm -f "${DB_FILE}" "${DB_FILE}-wal" "${DB_FILE}-shm"
 
 # Restore database file
 cp "$BACKUP_FILE" "$DB_FILE"
-chown -R vpsmon:vpsmon "$INSTALL_DIR/data"
+if id -u vpsmon &>/dev/null; then
+  chown -R vpsmon:vpsmon "$INSTALL_DIR/data"
+fi
 chmod 600 "$DB_FILE"
 
 # Finding 6: Verify restored database integrity
@@ -43,7 +45,9 @@ if command -v sqlite3 &>/dev/null; then
 fi
 
 echo "Restarting vps-monitor service..."
-systemctl start vps-monitor.service
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+  systemctl start vps-monitor.service
+fi
 sleep 2
 
 HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")

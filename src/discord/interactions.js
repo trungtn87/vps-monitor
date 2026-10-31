@@ -8,12 +8,14 @@ export class DiscordInteractionsHandler {
    * @param {import('./commands.js').DiscordCommands} options.commands
    * @param {string[]} [options.allowedUserIds] - Allowed Discord user IDs (Finding 9)
    * @param {string[]} [options.allowedGuildIds] - Allowed Discord guild/server IDs (Finding 9)
+   * @param {string} [options.nodeEnv] - Environment mode ('production' | 'development' | 'test')
    */
-  constructor({ publicKey, commands, allowedUserIds = [], allowedGuildIds = [] }) {
+  constructor({ publicKey, commands, allowedUserIds = [], allowedGuildIds = [], nodeEnv = 'development' }) {
     this.publicKey = publicKey;
     this.commands = commands;
     this.allowedUserIds = allowedUserIds;
     this.allowedGuildIds = allowedGuildIds;
+    this.nodeEnv = nodeEnv;
   }
 
   /**
@@ -51,6 +53,19 @@ export class DiscordInteractionsHandler {
 
     // 4. Discord APPLICATION_COMMAND (Type 2)
     if (data.type === 2 && data.data && data.data.name) {
+      // Blocker 5: In production, allowlists cannot be empty (Fail-Closed)
+      const hasRestrictions = this.allowedGuildIds.length > 0 || this.allowedUserIds.length > 0;
+      if (this.nodeEnv === 'production' && !hasRestrictions) {
+        logger.warn(`Discord command /${data.data.name} rejected: production requires DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_GUILD_IDS`);
+        return {
+          status: 200,
+          body: {
+            type: 4,
+            data: { content: '⛔ Chế độ production yêu cầu cấu hình danh sách được phép (DISCORD_ALLOWED_USER_IDS hoặc DISCORD_ALLOWED_GUILD_IDS).' }
+          }
+        };
+      }
+
       // Finding 9: Access restriction by Guild ID
       if (this.allowedGuildIds.length > 0) {
         const guildId = data.guild_id;

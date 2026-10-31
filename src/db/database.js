@@ -34,6 +34,89 @@ export class MonitorDatabase {
     this.db.exec(schemaSql);
   }
 
+  /**
+   * Execute an atomic transaction block
+   * @param {function} fn 
+   * @returns {*}
+   */
+  transaction(fn) {
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT;');
+      return result;
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  /**
+   * Atomically persist alert state transition + event history + outbox enqueue (Blocker 2)
+   */
+  recordAlertTransition({
+    alertKey,
+    currentState,
+    consecutiveCount = 1,
+    details = null,
+    serverId,
+    eventType,
+    severity = 'INFO',
+    message,
+    eventDetails = null,
+    alertPayload = null
+  }) {
+    return this.transaction(() => {
+      // 1. Alert state
+      const stateStmt = this.db.prepare(`
+        INSERT INTO alert_state (alert_key, current_state, consecutive_count, last_alerted_at, details_json, updated_at)
+        VALUES (?, ?, ?, datetime('now'), ?, datetime('now'))
+        ON CONFLICT(alert_key) DO UPDATE SET
+          current_state = excluded.current_state,
+          consecutive_count = excluded.consecutive_count,
+          last_alerted_at = excluded.last_alerted_at,
+          details_json = excluded.details_json,
+          updated_at = datetime('now')
+      `);
+      stateStmt.run(
+        alertKey,
+        currentState,
+        consecutiveCount,
+        details ? JSON.stringify(details) : null
+      );
+
+      // 2. Event history
+      let eventId = null;
+      if (eventType && message) {
+        const eventStmt = this.db.prepare(`
+          INSERT INTO event_history (server_id, event_type, severity, message, details_json, created_at)
+          VALUES (?, ?, ?, ?, ?, datetime('now'))
+        `);
+        const evRes = eventStmt.run(
+          serverId,
+          eventType,
+          severity,
+          message,
+          eventDetails ? JSON.stringify(eventDetails) : null
+        );
+        eventId = Number(evRes.lastInsertRowid);
+      }
+
+      // 3. Queue to alert_outbox
+      let outboxId = null;
+      if (alertPayload) {
+        const outboxStmt = this.db.prepare(`
+          INSERT INTO alert_outbox (alert_key, payload_json, status, attempts, next_retry_at, created_at)
+          VALUES (?, ?, 'PENDING', 0, datetime('now'), datetime('now'))
+        `);
+        const outboxRes = outboxStmt.run(alertKey, JSON.stringify(alertPayload));
+        outboxId = Number(outboxRes.lastInsertRowid);
+      }
+
+      return { eventId, outboxId };
+    });
+  }
+
   // --- Server Registry ---
   upsertServer(server) {
     const stmt = this.db.prepare(`
@@ -51,8 +134,8 @@ export class MonitorDatabase {
     return stmt.run(
       server.serverId,
       server.name,
-      server.host,
-      server.port,
+      server.host || '127.0.0.1',
+      (server.port !== undefined && server.port !== null && !isNaN(Number(server.port))) ? Number(server.port) : 5050,
       server.role || 'PRIMARY',
       server.expiryDate || null,
       server.isLocal ? 1 : 0
@@ -219,15 +302,16 @@ export class MonitorDatabase {
     );
   }
 
-  updateAlertCount(alertKey, count) {
+  updateAlertCount(alertKey, count, details = null) {
     const stmt = this.db.prepare(`
-      INSERT INTO alert_state (alert_key, current_state, consecutive_count, updated_at)
-      VALUES (?, 'NORMAL', ?, datetime('now'))
+      INSERT INTO alert_state (alert_key, current_state, consecutive_count, details_json, updated_at)
+      VALUES (?, 'NORMAL', ?, ?, datetime('now'))
       ON CONFLICT(alert_key) DO UPDATE SET
         consecutive_count = excluded.consecutive_count,
+        details_json = coalesce(excluded.details_json, alert_state.details_json),
         updated_at = datetime('now')
     `);
-    return stmt.run(alertKey, count);
+    return stmt.run(alertKey, count, details ? JSON.stringify(details) : null);
   }
 
   // --- Alert Outbox (Persistent delivery queue) ---

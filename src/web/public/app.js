@@ -68,18 +68,36 @@ function renderStatus(data) {
     const pill = document.getElementById(`${prefix}-status`);
     const dot = document.getElementById(`${prefix}-dot`);
     if (pill && dot) {
-      pill.textContent = state;
-      pill.className = `status-pill status-${state.toLowerCase()}`;
-      dot.className = `status-dot dot-${state.toLowerCase()}`;
+      if (state === 'STALE') {
+        pill.textContent = 'STALE (Dữ liệu cũ)';
+        pill.className = 'status-pill status-stale';
+        dot.className = 'status-dot dot-stale';
+      } else {
+        pill.textContent = state;
+        pill.className = `status-pill status-${state.toLowerCase()}`;
+        dot.className = `status-dot dot-${state.toLowerCase()}`;
+      }
     }
 
     // Heartbeat & App status
     const hbEl = document.getElementById(`${prefix}-heartbeat`);
     if (hbEl) {
       if (srv.isLocal) {
-        hbEl.textContent = 'Node cục bộ';
+        if (srv.agentHealth && srv.agentHealth.isStale) {
+          hbEl.textContent = `Node cục bộ (Agent cũ: ${srv.agentHealth.ageSec || '>180'}s)`;
+          hbEl.style.color = '#fbbf24';
+        } else {
+          hbEl.textContent = 'Node cục bộ (Tốt)';
+          hbEl.style.color = '#34d399';
+        }
       } else {
         hbEl.textContent = srv.lastHeartbeatAt ? `${srv.elapsedSec}s trước` : 'Chưa nhận';
+        if (srv.metrics && srv.metrics.isStale) {
+          hbEl.textContent += ' [Chỉ số cũ]';
+          hbEl.style.color = '#fbbf24';
+        } else {
+          hbEl.style.color = '';
+        }
       }
     }
 
@@ -99,17 +117,24 @@ function renderStatus(data) {
     // Metrics
     if (srv.metrics) {
       const m = srv.metrics;
-      updateMetricBar(`${prefix}-cpu`, m.cpuPct, `${m.cpuPct}%`);
-      updateMetricBar(`${prefix}-ram`, m.ramPct, `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)`);
-      updateMetricBar(`${prefix}-disk`, m.diskPct, `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)`);
+      const staleTag = m.isStale ? ' (cũ)' : '';
+      updateMetricBar(`${prefix}-cpu`, m.cpuPct, `${m.cpuPct}%${staleTag}`, m.isStale);
+      updateMetricBar(`${prefix}-ram`, m.ramPct, `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`, m.isStale);
+      updateMetricBar(`${prefix}-disk`, m.diskPct, `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`, m.isStale);
 
       const rxMb = (m.netRxBytes / (1024 * 1024)).toFixed(1);
       const txMb = (m.netTxBytes / (1024 * 1024)).toFixed(1);
-      document.getElementById(`${prefix}-net`).textContent = `${rxMb} / ${txMb} MB`;
+      document.getElementById(`${prefix}-net`).textContent = `${rxMb} / ${txMb} MB${staleTag}`;
 
       const days = Math.floor(m.uptimeSec / 86400);
       const hours = Math.floor((m.uptimeSec % 86400) / 3600);
-      document.getElementById(`${prefix}-uptime`).textContent = `${days}d ${hours}h`;
+      document.getElementById(`${prefix}-uptime`).textContent = `${days}d ${hours}h${staleTag}`;
+    } else {
+      document.getElementById(`${prefix}-cpu`).textContent = '--';
+      document.getElementById(`${prefix}-ram`).textContent = '--';
+      document.getElementById(`${prefix}-disk`).textContent = '--';
+      document.getElementById(`${prefix}-net`).textContent = '--';
+      document.getElementById(`${prefix}-uptime`).textContent = '--';
     }
 
     // Expiry
@@ -150,15 +175,23 @@ function renderStatus(data) {
   }
 }
 
-function updateMetricBar(prefix, pct, labelText) {
+function updateMetricBar(prefix, pct, labelText, isStale = false) {
   const valEl = document.getElementById(prefix);
   const barEl = document.getElementById(`${prefix}-bar`);
-  if (valEl) valEl.textContent = labelText;
+  if (valEl) {
+    valEl.textContent = labelText;
+    valEl.style.color = isStale ? '#fbbf24' : '';
+  }
   if (barEl) {
     barEl.style.width = `${Math.min(100, Math.max(0, pct))}%`;
     barEl.className = 'progress-fill';
-    if (pct >= 90) barEl.classList.add('progress-danger');
-    else if (pct >= 80) barEl.classList.add('progress-warn');
+    if (isStale) {
+      barEl.classList.add('progress-stale');
+    } else if (pct >= 90) {
+      barEl.classList.add('progress-danger');
+    } else if (pct >= 80) {
+      barEl.classList.add('progress-warn');
+    }
   }
 }
 

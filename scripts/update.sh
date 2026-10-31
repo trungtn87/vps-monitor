@@ -11,7 +11,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-INSTALL_DIR="/opt/vps-monitor"
+INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
 BACKUP_DIR="$INSTALL_DIR/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SNAPSHOT_DIR="$BACKUP_DIR/pre_update_$TIMESTAMP"
@@ -59,10 +59,14 @@ git pull --ff-only || {
   exit 1
 }
 
-chown -R vpsmon:vpsmon "$INSTALL_DIR"
+if id -u vpsmon &>/dev/null; then
+  chown -R vpsmon:vpsmon "$INSTALL_DIR"
+fi
 
 echo "===> [3/4] Restarting systemd service..."
-systemctl restart vps-monitor.service
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+  systemctl restart vps-monitor.service
+fi
 
 echo "===> [4/4] Verifying health endpoint..."
 sleep 2

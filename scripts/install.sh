@@ -49,16 +49,28 @@ else
   echo "User 'vpsmon' already exists."
 fi
 
-echo "===> [4/6] Setting up /opt/vps-monitor..."
-INSTALL_DIR="/opt/vps-monitor"
+echo "===> [4/6] Setting up $INSTALL_DIR..."
+INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/data"
 mkdir -p "$INSTALL_DIR/backups"
 
-# Copy all repository files to /opt/vps-monitor including .git and dotfiles (Finding 5)
+# Blocker 1: Setup secure directory for TLS certs if native TLS is used
+mkdir -p /etc/vps-monitor/certs
+if id -u vpsmon &>/dev/null; then
+  chown -R vpsmon:vpsmon /etc/vps-monitor
+fi
+chmod 700 /etc/vps-monitor
+chmod 700 /etc/vps-monitor/certs
+
+# Copy all repository files to install dir including .git and dotfiles (Finding 5)
 shopt -s dotglob
 cp -r ./* "$INSTALL_DIR/"
 shopt -u dotglob
+
+# Ensure scripts have execute permissions
+chmod +x "$INSTALL_DIR"/scripts/*.sh 2>/dev/null || true
+chmod +x "$INSTALL_DIR"/ops/scripts/*.sh 2>/dev/null || true
 
 # Verify .git exists so future updates work seamlessly
 if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -75,13 +87,19 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   echo "IMPORTANT: Please edit $INSTALL_DIR/.env with your actual IPs, TLS certs, and Discord credentials!"
 fi
 
-chown -R vpsmon:vpsmon "$INSTALL_DIR"
+if id -u vpsmon &>/dev/null; then
+  chown -R vpsmon:vpsmon "$INSTALL_DIR"
+fi
 chmod 700 "$INSTALL_DIR/data"
 
 echo "===> [5/6] Installing systemd service..."
-cp "$INSTALL_DIR/ops/systemd/vps-monitor.service" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable vps-monitor.service
+if [[ -d /etc/systemd/system ]]; then
+  cp "$INSTALL_DIR/ops/systemd/vps-monitor.service" /etc/systemd/system/
+  if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+    systemctl daemon-reload
+    systemctl enable vps-monitor.service
+  fi
+fi
 
 echo "===> [6/6] Setting up logrotate..."
 if [[ -f "$INSTALL_DIR/ops/logrotate/vps-monitor" ]]; then

@@ -82,12 +82,13 @@ export async function createServer(customEnv = null) {
 
   let discordInteractions = null;
   if (config.discordPublicKey) {
-    // Finding 9: Pass allowlists for user IDs and guild IDs
+    // Finding 9 & Blocker 5: Pass allowlists and nodeEnv for fail-closed validation
     discordInteractions = new DiscordInteractionsHandler({
       publicKey: config.discordPublicKey,
       commands,
       allowedUserIds: config.discordAllowedUserIds,
-      allowedGuildIds: config.discordAllowedGuildIds
+      allowedGuildIds: config.discordAllowedGuildIds,
+      nodeEnv: config.nodeEnv
     });
   }
 
@@ -147,21 +148,40 @@ export async function createServer(customEnv = null) {
     config
   });
 
-  // Finding 2: Native TLS / HTTPS support if cert & key are provided
+  // Finding 2 & Blocker 1: Native TLS / HTTPS support with permission handling
   let server;
-  const hasTls = config.tlsCertPath && config.tlsKeyPath &&
-    existsSync(config.tlsCertPath) && existsSync(config.tlsKeyPath);
+  const isTlsConfigured = Boolean(config.tlsCertPath && config.tlsKeyPath);
 
-  if (hasTls) {
-    logger.info('TLS certificate and key found. Starting HTTPS server.');
-    const cert = readFileSync(config.tlsCertPath);
-    const key = readFileSync(config.tlsKeyPath);
-    server = https.createServer({ cert, key }, (req, res) => {
-      router.handleRequest(req, res);
-    });
-  } else {
+  if (isTlsConfigured) {
+    if (!existsSync(config.tlsCertPath) || !existsSync(config.tlsKeyPath)) {
+      const err = new Error(`[TLS CONFIG ERROR] Configured TLS certificate or key file not found: cert=${config.tlsCertPath}, key=${config.tlsKeyPath}`);
+      logger.error(err.message);
+      if (config.requireTls && config.nodeEnv === 'production') throw err;
+    } else {
+      try {
+        const cert = readFileSync(config.tlsCertPath);
+        const key = readFileSync(config.tlsKeyPath);
+        server = https.createServer({ cert, key }, (req, res) => {
+          router.handleRequest(req, res);
+        });
+        logger.info('TLS certificate and key loaded successfully. Starting HTTPS server.');
+      } catch (err) {
+        if (err.code === 'EACCES') {
+          logger.error(
+            `[SECURITY PERMISSION ERROR] Service user 'vpsmon' cannot read TLS key (${config.tlsKeyPath}).\n` +
+            `Root-owned Let's Encrypt keys (/etc/letsencrypt/live/...) are mode 0600 root:root.\n` +
+            `Remedy: Copy certs to /etc/vps-monitor/certs/ owned by vpsmon:vpsmon (chmod 600),\n` +
+            `or terminate TLS via Nginx / Caddy reverse proxy on port 443/5050.`
+          );
+        }
+        throw err;
+      }
+    }
+  }
+
+  if (!server) {
     if (config.requireTls && config.nodeEnv === 'production') {
-      throw new Error('[SECURITY FATAL] REQUIRE_TLS is enabled but TLS_CERT_PATH or TLS_KEY_PATH is missing.');
+      throw new Error('[SECURITY FATAL] REQUIRE_TLS is enabled but TLS certificates could not be loaded.');
     }
     server = http.createServer((req, res) => {
       router.handleRequest(req, res);
@@ -263,7 +283,7 @@ export async function createServer(customEnv = null) {
     stopTimers,
     start: () => {
       return new Promise((resolve) => {
-        const protocol = hasTls ? 'https' : 'http';
+        const protocol = (server instanceof https.Server) ? 'https' : 'http';
         server.listen(config.port, config.host, () => {
           logger.info(`VPS Monitor running on ${protocol}://${config.host}:${config.port}`);
           startTimers();

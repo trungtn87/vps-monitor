@@ -31,3 +31,7 @@ jobs:
       - name: Run Comprehensive Test Suite (Unit & Integration)
         run: |
           npm test
+
+      - name: Run E2E Lifecycle Verification (Install -> Backup -> Rollback -> Restore)
+        run: |
+          bash tests/e2e/test-lifecycle.sh

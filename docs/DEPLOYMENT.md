@@ -84,19 +84,45 @@ sudo systemctl start vps-monitor
 
 Để đảm bảo an toàn tuyệt đối khi trao đổi heartbeat giữa hai VPS qua mạng Internet công cộng:
 
-### Cách 1: Native HTTPS tích hợp sẵn (Khuyến nghị nếu có domain)
-1. Cài đặt Certbot và lấy chứng chỉ Let's Encrypt cho subdomain của VPS:
+### Cách 1: Nginx Reverse Proxy TLS Termination (Khuyến nghị số 1 cho Production)
+Nginx chạy dưới tiến trình master có quyền đọc file chứng chỉ Let's Encrypt (`/etc/letsencrypt/live/...`), xử lý TLS 1.2/1.3 và proxy tới `http://127.0.0.1:5050`. Điều này giúp ứng dụng Node.js chạy với user phi đặc quyền `vpsmon` an toàn mà không gặp lỗi phân quyền (`EACCES`).
+
+1. Cài đặt Nginx và Certbot:
    ```bash
-   sudo certbot certonly --standalone -d vinahost.yourdomain.com
+   sudo apt-get install -y nginx certbot python3-certbot-nginx
+   sudo certbot --nginx -d monitor.yourdomain.com
    ```
-2. Cấu hình trong `/opt/vps-monitor/.env`:
+2. Kích hoạt cấu hình mẫu từ repository:
+   ```bash
+   sudo cp /opt/vps-monitor/ops/nginx/vps-monitor.conf /etc/nginx/sites-available/vps-monitor
+   sudo ln -sf /etc/nginx/sites-available/vps-monitor /etc/nginx/sites-enabled/
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+3. Trong `/opt/vps-monitor/.env`: Đặt `HOST=127.0.0.1`, để trống `TLS_CERT_PATH` và `TLS_KEY_PATH`, cấu hình `PEER_URL=https://peer-domain.com`.
+
+---
+
+### Cách 2: Native HTTPS trực tiếp trong Node.js (với Certbot Deploy Hook)
+Vì user `vpsmon` là user dịch vụ phi đặc quyền (`--system --shell /usr/sbin/nologin`), `vpsmon` **không thể** đọc trực tiếp private key của root tại `/etc/letsencrypt/live/.../privkey.pem` (mặc định quyền `0600 root:root`). 
+
+Để chạy native HTTPS an toàn:
+1. Thư mục `/etc/vps-monitor/certs` đã được tạo tự động bởi `scripts/install.sh` với quyền sở hữu `vpsmon:vpsmon` (`chmod 700`).
+2. Thiết lập Certbot Deploy Hook để tự động sao chép và phân quyền mỗi khi gia hạn chứng chỉ:
+   ```bash
+   # Chạy hook cấp chứng chỉ ban đầu:
+   sudo RENEWED_LINEAGE="/etc/letsencrypt/live/vinahost.yourdomain.com" bash /opt/vps-monitor/ops/scripts/deploy-cert-hook.sh
+   ```
+3. Cấu hình trong `/opt/vps-monitor/.env`:
    ```ini
-   TLS_CERT_PATH=/etc/letsencrypt/live/vinahost.yourdomain.com/fullchain.pem
-   TLS_KEY_PATH=/etc/letsencrypt/live/vinahost.yourdomain.com/privkey.pem
+   TLS_CERT_PATH=/etc/vps-monitor/certs/fullchain.pem
+   TLS_KEY_PATH=/etc/vps-monitor/certs/privkey.pem
    REQUIRE_TLS=true
    ```
 
-### Cách 2: Sử dụng Kênh Mạng Riêng Ảo WireGuard (Point-to-Point VPN)
+---
+
+### Cách 3: Kênh Mạng Riêng Ảo WireGuard (Point-to-Point VPN)
 - Thiết lập tunnel WireGuard giữa VinaHost (`10.8.0.1`) và Nhân Hòa (`10.8.0.2`).
 - Cấu hình `HOST=10.8.0.1` và `PEER_URL=http://10.8.0.2:5050`. Toàn bộ lưu lượng được mã hóa ở tầng mạng mà không cần chứng chỉ công cộng.
 

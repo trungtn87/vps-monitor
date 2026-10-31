@@ -11,7 +11,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-INSTALL_DIR="/opt/vps-monitor"
+INSTALL_DIR="${VPS_MONITOR_DIR:-/opt/vps-monitor}"
 SNAPSHOT_DIR="${1:-}"
 
 if [[ -z "$SNAPSHOT_DIR" || ! -d "$SNAPSHOT_DIR" ]]; then
@@ -52,10 +52,14 @@ if command -v sqlite3 &>/dev/null && [[ -f "$INSTALL_DIR/data/monitor.db" ]]; th
   sqlite3 "$INSTALL_DIR/data/monitor.db" "PRAGMA integrity_check;" 2>/dev/null || true
 fi
 
-chown -R vpsmon:vpsmon "$INSTALL_DIR"
+if id -u vpsmon &>/dev/null; then
+  chown -R vpsmon:vpsmon "$INSTALL_DIR"
+fi
 
 echo "===> [4/4] Starting service and checking status..."
-systemctl start vps-monitor.service
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
+  systemctl start vps-monitor.service
+fi
 sleep 2
 
 HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")

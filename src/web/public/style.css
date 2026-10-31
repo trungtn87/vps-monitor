@@ -185,6 +185,7 @@ h1 {
 .dot-online { background-color: var(--color-green); box-shadow: 0 0 8px var(--color-green); }
 .dot-disconnected { background-color: var(--color-red); box-shadow: 0 0 8px var(--color-red); }
 .dot-recovered { background-color: var(--color-orange); box-shadow: 0 0 8px var(--color-orange); }
+.dot-stale { background-color: var(--color-orange); box-shadow: 0 0 8px var(--color-orange); }
 .dot-unknown { background-color: var(--color-gray); }
 
 .status-pill {
@@ -198,6 +199,7 @@ h1 {
 .status-online { background: rgba(16, 185, 129, 0.2); color: #34d399; }
 .status-disconnected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
 .status-recovered { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+.status-stale { background: rgba(245, 158, 11, 0.25); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.5); }
 .status-unknown { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
 
 /* Metrics */
@@ -236,6 +238,7 @@ h1 {
 
 .progress-warn { background-color: var(--color-orange); }
 .progress-danger { background-color: var(--color-red); }
+.progress-stale { background-color: var(--color-gray); opacity: 0.7; }
 
 /* Stats Mini Grid */
 .stats-mini-grid {
