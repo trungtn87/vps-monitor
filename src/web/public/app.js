@@ -66,12 +66,19 @@ function renderStatus(data) {
     // Use account-wide Vibe quotas only if the independent API has returned
     // a fresh verified sample; never mislabel container values as host totals.
     const quota = srv.hostingQuota && !srv.hostingQuota.isStale ? srv.hostingQuota : null;
+    const summed = srv.serverId === 'nhanhoa' &&
+      srv.containerTotals && !srv.containerTotals.isStale &&
+      Array.isArray(srv.containerTotals.apps) && srv.containerTotals.apps.length === 2
+        ? srv.containerTotals : null;
+    if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed);
+
     // Show resource provenance: the Vibe app runs in an isolated container.
     const scopeBadge = document.getElementById(`${prefix}-app-badge`);
     if (scopeBadge) {
       const appName = prefix === 'nh' ? 'AutoTrade' : '11Ship';
       scopeBadge.textContent = quota && prefix === 'nh'
         ? 'Tổng gói Vibe Hosting'
+        : summed && prefix === 'nh' ? '2 ứng dụng · Container'
         : srv.metricScope === 'CONTAINER'
           ? `${appName} · Container`
           : appName;
@@ -139,6 +146,15 @@ function renderStatus(data) {
           `${quota.ramUsedMb.toFixed(1)} / ${quota.ramQuotaMb} MB (${quota.ramPct.toFixed(1)}%)`);
         updateMetricBar(`${prefix}-disk`, quota.diskPct,
           `${quota.diskUsedMb.toFixed(2)} / ${quota.diskQuotaMb} MB (${quota.diskPct.toFixed(1)}%)`);
+      } else if (summed && prefix === 'nh') {
+        const cpuKnown = Number.isFinite(summed.cpuUsedVcpu);
+        updateMetricBar('nh-cpu', cpuKnown ? summed.cpuPct : 0,
+          cpuKnown
+            ? `${summed.cpuUsedVcpu.toFixed(3)} / ${summed.cpuQuotaVcpu} vCPU (${summed.cpuPct.toFixed(1)}%) · 2 app`
+            : 'Đang đo CPU 2 app');
+        updateMetricBar('nh-ram', summed.ramPct,
+          `${summed.ramUsedMb.toFixed(1)} / ${summed.ramQuotaMb} MB (${summed.ramPct.toFixed(1)}%) · 2 app`);
+        updateMetricBar('nh-disk', 0, 'N/A · chưa có dữ liệu lưu trữ');
       } else {
         updateMetricBar(`${prefix}-cpu`, m.cpuPct,
           `${m.cpuPct}%${srv.metricScope === 'CONTAINER' ? ' (process)' : ''}${staleTag}`, m.isStale);
@@ -201,6 +217,35 @@ function renderStatus(data) {
       banner.style.display = 'none';
     }
   }
+}
+
+function renderNhContainerBreakdown(summed) {
+  const el = document.getElementById('nh-container-breakdown');
+  if (!el) return;
+  el.replaceChildren();
+  const title = document.createElement('div');
+  title.className='container-breakdown-title';
+  title.textContent = summed ? 'Số liệu thực đo của 2 container' :
+    'Chưa đủ số liệu từ cả VPS Monitor và AutoTrade';
+  el.appendChild(title);
+  if (summed) {
+    for (const app of summed.apps) {
+      const line = document.createElement('div');
+      line.className='container-breakdown-item';
+      const name = document.createElement('span');
+      name.textContent = app.name;
+      const value = document.createElement('span');
+      value.textContent = `${app.ramUsedMb.toFixed(1)} MB RAM · ${app.cpuVcpu === null ? 'CPU đang đo' : app.cpuVcpu.toFixed(3) + ' vCPU'}`;
+      line.append(name, value);
+      el.appendChild(line);
+    }
+  }
+  const note = document.createElement('div');
+  note.className='container-breakdown-subtitle';
+  note.textContent = summed ?
+    'Tổng container / hạn mức gói (1 vCPU, 2 GB); không gồm overhead nhà cung cấp. Disk chưa xác minh.' :
+    'Đợi bản AutoTrade có endpoint đo tài nguyên và mẫu mới; không ước tính từ một container.';
+  el.appendChild(note);
 }
 
 function updateMetricBar(prefix, pct, labelText, isStale = false) {
