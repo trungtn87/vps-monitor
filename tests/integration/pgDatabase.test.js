@@ -94,3 +94,31 @@ test('Supabase connection must never silently fall back to plaintext or wrong pr
   const local = new PgMonitorDatabase('postgresql://postgres:test@127.0.0.1:5432/postgres', { testMode: true });
   assert.equal(local.pool.options.ssl, false);
 });
+
+test('two independent Monitor dispatchers claim each Discord alert only once', { skip: !url }, async () => {
+  const nodeA = await new PgMonitorDatabase(url, { testMode: true }).init();
+  const nodeB = await new PgMonitorDatabase(url, { testMode: true }).init();
+  let id;
+  try {
+    id = await nodeA.queueAlert({
+      alertKey: 'pg-ci-discord-claim',
+      payload: { title: 'CI atomic lease check' }
+    });
+    const [first, second] = await Promise.all([
+      nodeA.claimPendingAlerts(100), nodeB.claimPendingAlerts(100)
+    ]);
+    const claims = [...first, ...second].filter(r => r.id === id);
+    assert.equal(claims.length, 1, 'a single event may not be claimed by two nodes');
+    const claimedState = await nodeA.q('SELECT status FROM vps_monitor.alert_outbox WHERE id=$1',[id]);
+    assert.equal(claimedState.rows[0].status, 'SENDING');
+
+    await nodeA.markAlertRetry(id, 1, 0, 'test retry');
+    const retried = await nodeB.claimPendingAlerts(100);
+    assert.equal(retried.filter(r => r.id === id).length, 1, 'a failed send can be retried');
+    await nodeB.markAlertDelivered(id);
+    assert.equal((await nodeA.claimPendingAlerts(100)).filter(r => r.id === id).length, 0);
+  } finally {
+    if (id) await nodeA.markAlertDelivered(id);
+    await Promise.all([nodeA.close(), nodeB.close()]);
+  }
+});
