@@ -1,8 +1,8 @@
 # Hướng dẫn Thiết lập Discord Bot & Cảnh báo Tự động
 
 VPS Monitor V1 hỗ trợ hai kênh tích hợp với Discord:
-1. **Cảnh báo tự động (Automated Alerts):** Sử dụng Discord Webhook (nhanh, nhẹ, độ tin cậy cao, tự động gửi từ VPS còn sống).
-2. **Tra cứu tương tác (Slash Commands):** Sử dụng Discord HTTP Interactions với xác thực chữ ký Ed25519 native.
+1. **Cảnh báo tự động (Automated Alerts qua Persistent Outbox):** Sử dụng Discord Webhook hoặc Bot Channel API kèm hàng đợi outbox bền vững chống mất tin.
+2. **Tra cứu tương tác (Slash Commands):** Sử dụng Discord HTTP Interactions với xác thực chữ ký Ed25519 native và phân quyền theo User ID / Guild ID.
 
 ---
 
@@ -23,6 +23,13 @@ Dán URL vừa copy vào biến `DISCORD_WEBHOOK_URL` trong file `/opt/vps-monit
 ```ini
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz
 ```
+
+Nếu sử dụng Bot Token để gửi vào channel riêng:
+```ini
+DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_CHANNEL_ID=your_text_channel_id_here
+```
+*(Lưu ý: `DISCORD_CHANNEL_ID` là ID của Channel văn bản, phân biệt hoàn toàn với `DISCORD_APP_ID`)*.
 
 ---
 
@@ -78,18 +85,26 @@ curl -X POST https://discord.com/api/v10/applications/YOUR_APP_ID/commands \
   }'
 ```
 
-### Bước 3: Cấu hình Interactions Endpoint URL
-1. Trên Discord Developer Portal tại **General Information**:
-2. Tìm ô **Interactions Endpoint URL**.
-3. Điền URL trỏ về endpoint của VPS Monitor:
+### Bước 3: Cấu hình Interactions Endpoint URL (Yêu cầu HTTPS công cộng)
+Discord bắt buộc endpoint nhận lệnh tương tác phải chạy **HTTPS hợp lệ** (không chấp nhận self-signed):
+1. Cấu hình HTTPS (Let's Encrypt hoặc Cloudflare tunnel / Nginx reverse proxy) trỏ về port 5050.
+2. Trên Discord Developer Portal tại **General Information**:
+3. Điền URL:
    ```
-   https://<TEN_MIEN_HOAC_IP_VPS>:5050/api/discord/interactions
+   https://vinahost.yourdomain.com:5050/api/discord/interactions
    ```
-4. Discord sẽ tự động gửi một gói tin `PING` kèm chữ ký Ed25519 để xác thực. VPS Monitor V1 đã tích hợp sẵn cơ chế kiểm tra Ed25519 và tự động trả về `PONG`, Discord sẽ hiển thị thông báo xác thực thành công.
+4. Discord sẽ tự động gửi gói tin `PING` kèm chữ ký Ed25519. VPS Monitor V1 đã tích hợp sẵn cơ chế kiểm tra Ed25519 và tự động trả về `PONG`, Discord sẽ hiển thị thông báo xác thực thành công.
 
 ---
 
-## 3. Quản lý Secret & Bảo mật
-- Tất cả token và public key phải được lưu trong file `/opt/vps-monitor/.env` với phân quyền `chmod 600`.
-- Tuyệt đối không commit file `.env` chứa token thật lên GitHub repository.
-- Các yêu cầu HTTP từ Discord bắt buộc phải có chữ ký Ed25519 hợp lệ; mọi yêu cầu không hợp lệ đều bị từ chối với HTTP 401 Unauthorized.
+## 3. Phân quyền & Bảo mật Lệnh Slash (Finding 9)
+Để ngăn chặn người lạ trong Discord Server gọi lệnh và xem thông tin máy chủ:
+Trong file `/opt/vps-monitor/.env`, cấu hình danh sách ID được phép:
+```ini
+# Chỉ cho phép các User ID cụ thể (ví dụ ID của Owner / Lead)
+DISCORD_ALLOWED_USER_IDS=123456789012345678,987654321098765432
+
+# Chỉ cho phép chạy trên Server/Guild Discord nội bộ của team
+DISCORD_ALLOWED_GUILD_IDS=112233445566778899
+```
+Mọi yêu cầu gọi lệnh từ người dùng hoặc server không có trong danh sách sẽ bị từ chối với thông báo `⛔ Bạn không có quyền thực hiện lệnh này.`

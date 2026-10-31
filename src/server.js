@@ -1,4 +1,6 @@
 import http from 'node:http';
+import https from 'node:https';
+import { readFileSync, existsSync } from 'node:fs';
 import { loadConfig } from './common/config.js';
 import { logger } from './common/logger.js';
 import { MonitorDatabase } from './db/database.js';
@@ -16,6 +18,7 @@ import { HttpRouter } from './web/routes.js';
 
 export async function createServer(customEnv = null) {
   const config = loadConfig(customEnv || process.env);
+  const serviceStartedAt = Date.now();
   logger.info(`Starting VPS Monitor V1 on [${config.serverName}] (ID: ${config.serverId})`);
 
   // 1. Initialize SQLite Database
@@ -65,24 +68,30 @@ export async function createServer(customEnv = null) {
     db
   });
 
-  const evaluator = new MonitorEvaluator({ db, config });
+  // Finding 4: Track serviceStartedAt for boot-time grace evaluation
+  const evaluator = new MonitorEvaluator({ db, config, serviceStartedAt });
 
+  // Finding 9: Use distinct discordChannelId, not discordAppId
   const notifier = new DiscordNotifier({
     webhookUrl: config.discordWebhookUrl,
     botToken: config.discordBotToken,
-    channelId: config.discordAppId
+    channelId: config.discordChannelId
   });
 
   const commands = new DiscordCommands({ db, evaluator, config });
 
   let discordInteractions = null;
   if (config.discordPublicKey) {
+    // Finding 9: Pass allowlists for user IDs and guild IDs
     discordInteractions = new DiscordInteractionsHandler({
       publicKey: config.discordPublicKey,
-      commands
+      commands,
+      allowedUserIds: config.discordAllowedUserIds,
+      allowedGuildIds: config.discordAllowedGuildIds
     });
   }
 
+  // Finding 3: AlertEngine with persistent outbox queue
   const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
 
   // 5. Function to package outgoing metrics for heartbeat
@@ -138,9 +147,26 @@ export async function createServer(customEnv = null) {
     config
   });
 
-  const server = http.createServer((req, res) => {
-    router.handleRequest(req, res);
-  });
+  // Finding 2: Native TLS / HTTPS support if cert & key are provided
+  let server;
+  const hasTls = config.tlsCertPath && config.tlsKeyPath &&
+    existsSync(config.tlsCertPath) && existsSync(config.tlsKeyPath);
+
+  if (hasTls) {
+    logger.info('TLS certificate and key found. Starting HTTPS server.');
+    const cert = readFileSync(config.tlsCertPath);
+    const key = readFileSync(config.tlsKeyPath);
+    server = https.createServer({ cert, key }, (req, res) => {
+      router.handleRequest(req, res);
+    });
+  } else {
+    if (config.requireTls && config.nodeEnv === 'production') {
+      throw new Error('[SECURITY FATAL] REQUIRE_TLS is enabled but TLS_CERT_PATH or TLS_KEY_PATH is missing.');
+    }
+    server = http.createServer((req, res) => {
+      router.handleRequest(req, res);
+    });
+  }
 
   // 7. Interval Loops
   let agentTimer = null;
@@ -179,7 +205,7 @@ export async function createServer(customEnv = null) {
     }
   };
 
-  // Alert check cycle
+  // Alert check cycle & outbox flush
   const runAlertCycle = async () => {
     try {
       await alertEngine.checkCycle();
@@ -237,8 +263,9 @@ export async function createServer(customEnv = null) {
     stopTimers,
     start: () => {
       return new Promise((resolve) => {
+        const protocol = hasTls ? 'https' : 'http';
         server.listen(config.port, config.host, () => {
-          logger.info(`VPS Monitor running on http://${config.host}:${config.port}`);
+          logger.info(`VPS Monitor running on ${protocol}://${config.host}:${config.port}`);
           startTimers();
           resolve(server);
         });

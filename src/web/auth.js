@@ -27,9 +27,9 @@ export class AuthGuard {
    * @returns {boolean}
    */
   isAuthorized(req) {
-    // If no password or token is configured, allow in development only
+    // Fail-closed: If no password or token is configured, deny all requests
     if (!this.pass && !this.apiToken) {
-      return true;
+      return false;
     }
 
     const authHeader = req.headers['authorization'] || '';
