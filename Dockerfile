@@ -3,6 +3,8 @@
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
+COPY --chown=node:node package.json /app/package.json
+RUN npm install --omit=dev --no-audit --no-fund
 COPY --chown=node:node . /app
 RUN mkdir -p /data && chown node:node /data
 USER node
