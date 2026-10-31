@@ -63,6 +63,15 @@ function renderStatus(data) {
   for (const srv of data.servers) {
     const prefix = srv.serverId === 'vinahost' ? 'vh' : 'nh';
 
+    // Show resource provenance: the Vibe app runs in an isolated container.
+    const scopeBadge = document.getElementById(`${prefix}-app-badge`);
+    if (scopeBadge) {
+      const appName = prefix === 'nh' ? 'AutoTrade' : '11Ship';
+      scopeBadge.textContent = srv.metricScope === 'CONTAINER'
+        ? `${appName} · Container`
+        : appName;
+    }
+
     // Status dot & pill
     const state = srv.connectionState || 'UNKNOWN';
     const pill = document.getElementById(`${prefix}-status`);
@@ -118,9 +127,14 @@ function renderStatus(data) {
     if (srv.metrics) {
       const m = srv.metrics;
       const staleTag = m.isStale ? ' (cũ)' : '';
-      updateMetricBar(`${prefix}-cpu`, m.cpuPct, `${m.cpuPct}%${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-ram`, m.ramPct, `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-disk`, m.diskPct, `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`, m.isStale);
+      updateMetricBar(`${prefix}-cpu`, m.cpuPct,
+        `${m.cpuPct}%${srv.metricScope === 'CONTAINER' ? ' (process)' : ''}${staleTag}`, m.isStale);
+      updateMetricBar(`${prefix}-ram`, m.ramPct,
+        m.ramTotalMb > 0 ? `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`
+          : `${m.ramUsedMb} MB (container limit N/A)${staleTag}`, m.isStale);
+      updateMetricBar(`${prefix}-disk`, m.diskPct,
+        m.diskTotalGb > 0 ? `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`
+          : `N/A (không có quyền host)${staleTag}`, m.isStale);
 
       const rxMb = (m.netRxBytes / (1024 * 1024)).toFixed(1);
       const txMb = (m.netTxBytes / (1024 * 1024)).toFixed(1);
