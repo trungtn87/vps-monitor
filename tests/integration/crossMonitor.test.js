@@ -41,15 +41,15 @@ test('Cross-monitoring: VinaHost and Nhân Hòa bidirectional heartbeat exchange
 
   try {
     // Before heartbeats, both evaluate peer as UNKNOWN
-    assert.strictEqual(vhApp.evaluator.evaluatePeerHeartbeat('nhanhoa').state, NodeState.UNKNOWN);
-    assert.strictEqual(nhApp.evaluator.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
+    assert.strictEqual(vhApp.await evaluator.evaluatePeerHeartbeat('nhanhoa').state, NodeState.UNKNOWN);
+    assert.strictEqual(nhApp.await evaluator.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
 
     // 3. VinaHost sends heartbeat to Nhân Hòa
     const vhSendRes = await vhApp.heartbeatClient.sendHeartbeat();
     assert.strictEqual(vhSendRes.success, true);
 
     // Nhân Hòa should now see VinaHost as ONLINE
-    const nhEval = nhApp.evaluator.evaluatePeerHeartbeat('vinahost');
+    const nhEval = nhApp.await evaluator.evaluatePeerHeartbeat('vinahost');
     assert.strictEqual(nhEval.state, NodeState.ONLINE);
 
     // 4. Nhân Hòa sends heartbeat to VinaHost
@@ -57,19 +57,19 @@ test('Cross-monitoring: VinaHost and Nhân Hòa bidirectional heartbeat exchange
     assert.strictEqual(nhSendRes.success, true);
 
     // VinaHost should now see Nhân Hòa as ONLINE
-    const vhEval = vhApp.evaluator.evaluatePeerHeartbeat('nhanhoa');
+    const vhEval = vhApp.await evaluator.evaluatePeerHeartbeat('nhanhoa');
     assert.strictEqual(vhEval.state, NodeState.ONLINE);
 
     // 5. Simulate heartbeat loss (> 180s) on VinaHost
     vhApp.db.db.prepare("UPDATE heartbeat_log SET received_at = datetime('now', '-200 seconds')").run();
-    const vhDisconnectedEval = vhApp.evaluator.evaluatePeerHeartbeat('nhanhoa');
+    const vhDisconnectedEval = vhApp.await evaluator.evaluatePeerHeartbeat('nhanhoa');
     assert.strictEqual(vhDisconnectedEval.state, NodeState.DISCONNECTED);
 
     // 6. Simulate recovery: Nhân Hòa sends another heartbeat
     await vhApp.db.setAlertState('nhanhoa:heartbeat', NodeState.DISCONNECTED);
     await nhApp.heartbeatClient.sendHeartbeat();
 
-    const vhRecoveredEval = vhApp.evaluator.evaluatePeerHeartbeat('nhanhoa');
+    const vhRecoveredEval = vhApp.await evaluator.evaluatePeerHeartbeat('nhanhoa');
     assert.strictEqual(vhRecoveredEval.state, NodeState.RECOVERED);
   } finally {
     await vhApp.stop();
