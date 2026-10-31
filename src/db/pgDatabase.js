@@ -52,7 +52,7 @@ export class PgMonitorDatabase {
       port: Number(u.port || 5432),
       user: decodeURIComponent(u.username),
       password: decodeURIComponent(u.password),
-      database: decodeURIComponent(u.pathname.replace(/^\\//, '') || 'postgres'),
+      database: decodeURIComponent(u.pathname.slice(1) || 'postgres'),
       max: 3, idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
       ssl: testMode ? false : { rejectUnauthorized: false }
