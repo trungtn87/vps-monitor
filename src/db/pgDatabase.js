@@ -28,6 +28,15 @@ export class PgMonitorDatabase {
     if (!['postgresql:', 'postgres:'].includes(u.protocol)) {
       throw new Error('[DB CONFIG ERROR] DATABASE_URL must be postgres:// or postgresql://');
     }
+    // Restrict production to this standalone project before opening a connection.
+    // The shared Supabase pooler carries the project ref in its username.
+    const projectRef = 'gmpgtwtxhjwjeincvkxn';
+    const directHost = u.hostname === `db.${projectRef}.supabase.co`;
+    const pooledHost = u.hostname.endsWith('.pooler.supabase.com') &&
+      u.username.endsWith(`.${projectRef}`);
+    if (!testMode && !directHost && !pooledHost) {
+      throw new Error('[DB CONFIG ERROR] DATABASE_URL must target the dedicated VPS-Monitor Supabase project.');
+    }
     this.pool = new Pool({
       connectionString: url, max: 3, idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
@@ -37,14 +46,14 @@ export class PgMonitorDatabase {
     this.pool.on('error', () => { /* pool automatically replaces broken idle connections */ });
   }
   async init() {
-    const check = await this.pool.query("SELECT to_regclass('vps_monitor.server_registry') AS t");
-    if (!check.rows[0]?.t) throw new Error('[DB SCHEMA ERROR] vps_monitor schema missing. Apply monitor_schema.sql to the dedicated Supabase project.');
-    const projectRef = 'gmpgtwtxhjwjeincvkxn';
-    // Ref guard prevents accidentally targeting AutoTrade or an unrelated project.
-    if (!this.testMode && !this.pool.options.connectionString.includes(projectRef)) {
-      throw new Error('[DB CONFIG ERROR] This deployment is restricted to the VPS-Monitor Supabase project.');
+    try {
+      const check = await this.pool.query("SELECT to_regclass('vps_monitor.server_registry') AS t");
+      if (!check.rows[0]?.t) throw new Error('[DB SCHEMA ERROR] vps_monitor schema missing. Apply monitor_schema.sql to the dedicated Supabase project.');
+      return this;
+    } catch (err) {
+      await this.pool.end();
+      throw err;
     }
-    return this;
   }
   q(sql, values = []) { return this.pool.query(sql, values); }
   async upsertServer(s) {
