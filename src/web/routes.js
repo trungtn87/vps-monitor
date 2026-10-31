@@ -103,7 +103,7 @@ export class HttpRouter {
           return this._sendError(res, 400, 'Invalid JSON payload');
         }
 
-        const result = this.heartbeatReceiver.processHeartbeat(payload, signature);
+        const result = await this.heartbeatReceiver.processHeartbeat(payload, signature);
         return this._sendJson(res, result.code, { status: result.reason });
       } catch (err) {
         logger.error('Error handling heartbeat request:', err);
@@ -121,7 +121,7 @@ export class HttpRouter {
       const ts = req.headers['x-signature-timestamp'] || '';
       try {
         const rawBody = await this._readBody(req);
-        const result = this.discordInteractions.handle(rawBody, sig, ts);
+        const result = await this.discordInteractions.handle(rawBody, sig, ts);
         if (typeof result.body === 'string') {
           res.writeHead(result.status, { 'Content-Type': 'text/plain' });
           return res.end(result.body);
@@ -151,22 +151,22 @@ export class HttpRouter {
 
     // 4. API Status Overview
     if (pathname === '/api/status' && method === 'GET') {
-      const servers = this.db.getAllServers();
-      const statusList = servers.map(srv => {
+      const servers = await this.db.getAllServers();
+      const statusList = await Promise.all(servers.map(async srv => {
         const isLocal = srv.server_id === this.config.serverId;
         let connectionState = NodeState.ONLINE;
         let elapsedSec = 0;
         let lastReceivedAt = null;
 
         if (!isLocal) {
-          const evalRes = this.evaluator.evaluatePeerHeartbeat(srv.server_id);
+          const evalRes = await this.evaluator.evaluatePeerHeartbeat(srv.server_id);
           connectionState = evalRes.state;
           elapsedSec = evalRes.elapsedSec;
           lastReceivedAt = evalRes.lastReceivedAt;
         }
 
-        const latestMetrics = this.db.getLatestMetrics(srv.server_id);
-        const services = this.db.getServicesByServer(srv.server_id);
+        const latestMetrics = await this.db.getLatestMetrics(srv.server_id);
+        const services = await this.db.getServicesByServer(srv.server_id);
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
 
@@ -229,7 +229,7 @@ export class HttpRouter {
             lastError: s.last_error
           }))
         };
-      });
+      }));
 
       return this._sendJson(res, 200, {
         localServerId: this.config.serverId,
@@ -242,14 +242,14 @@ export class HttpRouter {
     if (pathname === '/api/metrics' && method === 'GET') {
       const serverId = url.searchParams.get('server') || this.config.serverId;
       const limit = Math.min(300, parseInt(url.searchParams.get('limit') || '60', 10));
-      const metrics = this.db.getMetricsHistory(serverId, limit);
+      const metrics = await this.db.getMetricsHistory(serverId, limit);
       return this._sendJson(res, 200, { serverId, metrics });
     }
 
     // 6. API Events History
     if (pathname === '/api/events' && method === 'GET') {
       const limit = Math.min(100, parseInt(url.searchParams.get('limit') || '50', 10));
-      const events = this.db.getRecentEvents(limit);
+      const events = await this.db.getRecentEvents(limit);
       return this._sendJson(res, 200, { events });
     }
 
