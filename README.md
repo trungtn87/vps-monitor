@@ -11,24 +11,28 @@ Không phụ thuộc bất kỳ máy chủ trung tâm thứ ba hay dịch vụ �
 ## 🚀 Tính năng Nổi bật
 
 - **Kiến trúc Đối xứng Độc lập:** Cùng một codebase triển khai trên 2 VPS. Nếu một bên gặp sự cố, bên còn lại vẫn hoạt động bình thường và gửi cảnh báo về Discord.
-- **Heartbeat & Xác thực Bảo mật:** Gửi nhịp tim kiểm tra mỗi 60 giây, bảo vệ bằng chữ ký HMAC-SHA256, kiểm tra cửa sổ thời gian (drift tolerance) và chống phát lại bằng Nonce.
-- **Phát hiện Mất kết nối & Phục hồi:**
-  - Chuyển sang `DISCONNECTED` khi quá 180 giây không nhận được heartbeat.
+- **Bảo mật Fail-Closed & TLS:** Bắt buộc mật khẩu/token, cấm truy cập nặc danh; yêu cầu bí mật HMAC tối thiểu 32 ký tự trong production; hỗ trợ native HTTPS/TLS hoặc mạng riêng ảo WireGuard.
+- **Hàng đợi Cảnh báo Bền vững (Alert Outbox):** Lưu trữ cảnh báo vào SQLite và retry lũy tiến; đảm bảo không bao giờ mất cảnh báo ngay cả khi Discord gặp sự cố kéo dài.
+- **Phát hiện Mất kết nối & Boot-time Grace:**
+  - Chuyển sang `DISCONNECTED` khi quá 180 giây không nhận được heartbeat, hoặc hết thời gian khởi động (180s) mà chưa từng nhận được heartbeat từ đối tác.
   - Tự động phát hiện và gửi cảnh báo `RECOVERED` khi kết nối được khôi phục.
 - **Giám sát Dịch vụ Ứng dụng:** Probe HTTP endpoint `/healthz` cục bộ của 11Ship hoặc AutoTrade; phân biệt rành mạch giữa sự cố mạng/máy chủ và sự cố ứng dụng.
 - **Dashboard Web Hiện đại & Responsive:**
   - Thiết kế mobile-first, giao diện tối (dark mode).
   - Thẻ trực quan cho VinaHost và Nhân Hòa.
   - Biểu đồ biến thiên tài nguyên (CPU & RAM) bằng SVG native không phụ thuộc thư viện ngoài.
-  - Đăng nhập bảo vệ bằng HTTP Basic Auth hoặc Bearer Token.
+  - Đăng nhập bảo vệ bằng HTTP Basic Auth hoặc Bearer Token (fail-closed).
 - **Discord Bot & Cảnh báo Tự động:**
   - Tự động gửi cảnh báo khẩn cấp (mất kết nối, phục hồi, app sập, tài nguyên vượt 85%, sắp hết hạn VPS).
+  - Cảnh báo thời hạn VPS đúng 5 mốc (30, 15, 7, 3, 1 ngày) và quá hạn, không lặp lại hàng ngày.
   - Tra cứu trạng thái qua Slash Commands: `/status`, `/vinahost`, `/nhanhoa`, `/expiry`.
+  - Phân quyền người dùng và máy chủ Discord (`DISCORD_ALLOWED_USER_IDS`, `DISCORD_ALLOWED_GUILD_IDS`).
   - Hỗ trợ xác thực chữ ký Ed25519 native cho Discord HTTP Interactions.
-- **Lưu trữ Bền vững & Tự dọn dẹp:**
+- **Lưu trữ Bền vững & Sao lưu Nhất quán:**
   - Lưu trữ độc lập bằng SQLite (chế độ WAL, foreign keys enabled).
+  - Hỗ trợ sao lưu online an toàn (`VACUUM INTO`) và kiểm tra toàn vẹn (`PRAGMA integrity_check`).
   - Tự động cắt tỉa và dọn dẹp dữ liệu cũ sau **30 ngày**.
-  - Lưu trạng thái cảnh báo để không gửi lặp lại (spam) và khôi phục chính xác sau khi restart service.
+  - Lưu trạng thái cảnh báo trên đĩa thật để không gửi lặp lại (spam) và khôi phục chính xác sau khi restart service.
 - **Vận hành Tiêu chuẩn Ubuntu 24.04:**
   - Chạy dưới người dùng hệ thống không đặc quyền `vpsmon`.
   - Quản lý qua systemd (`Restart=always`, giới hạn RAM tối đa 256MB).
