@@ -16,7 +16,9 @@ const secureEnv = {
   HOST: '0.0.0.0',
   PORT: '3000',
   REQUIRE_TLS: 'false',
-  VIBE_HOSTING: 'true'
+  VIBE_HOSTING: 'true',
+  DB_BACKEND: 'supabase_postgres',
+  DATABASE_URL: 'postgresql://postgres:fake-password@db.gmpgtwtxhjwjeincvkxn.supabase.co:5432/postgres'
 };
 
 test('Vibe mode rejects a public HTTP bind unless trusted ingress is explicitly acknowledged', () => {
@@ -45,6 +47,7 @@ test('Vibe app exposes container provenance and requires secure production crede
   assert.equal(config.dbPath, '/data/monitor.db');
   assert.throws(() => loadConfig({ ...env, HEARTBEAT_SECRET: '' }), /SECURITY FATAL/);
   assert.throws(() => loadConfig({ ...env, DASHBOARD_PASS: '' }), /SECURITY FATAL/);
+  assert.throws(() => loadConfig({ ...env, DATABASE_URL: '' }), /DB CONFIG ERROR/);
   const publicConfig = loadConfig({ ...env, PUBLIC_DASHBOARD: 'true', DASHBOARD_PASS: '', API_TOKEN: '' });
   assert.equal(publicConfig.publicDashboard, true);
   assert.throws(() => loadConfig({
@@ -116,7 +119,7 @@ test('Vibe public dashboard exposes GET only, but never bypasses heartbeat signa
   }
 });
 
-test('Monitor SQLite is independent and survives reopening its own file', () => {
+test('Legacy VinaHost SQLite remains independent and survives reopening its own file', () => {
   const dir = mkdtempSync(join(tmpdir(), 'monitor-db-isolated-'));
   const monitorDb = join(dir, 'vps-monitor.db');
   const otherDb = join(dir, 'autotrade-unrelated.db');
