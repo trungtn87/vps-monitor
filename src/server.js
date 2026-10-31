@@ -176,7 +176,15 @@ export async function createServer(customEnv = null) {
         const cert = readFileSync(config.tlsCertPath);
         const key = readFileSync(config.tlsKeyPath);
         server = https.createServer({ cert, key }, (req, res) => {
-          router.handleRequest(req, res);
+          Promise.resolve(router.handleRequest(req, res)).catch(err => {
+            logger.error('Monitor request failed:', err);
+            if (!res.headersSent) {
+              res.writeHead(503, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Monitor database temporarily unavailable' }));
+            } else if (!res.writableEnded) {
+              res.end();
+            }
+          });
         });
         logger.info('TLS certificate and key loaded successfully. Starting HTTPS server.');
       } catch (err) {
@@ -198,7 +206,15 @@ export async function createServer(customEnv = null) {
       throw new Error('[SECURITY FATAL] REQUIRE_TLS is enabled but TLS certificates could not be loaded.');
     }
     server = http.createServer((req, res) => {
-      router.handleRequest(req, res);
+      Promise.resolve(router.handleRequest(req, res)).catch(err => {
+        logger.error('Monitor request failed:', err);
+        if (!res.headersSent) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Monitor database temporarily unavailable' }));
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      });
     });
   }
 
