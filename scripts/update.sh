@@ -61,7 +61,7 @@ git pull --ff-only || {
   exit 1
 }
 
-if id -u vpsmon &>/dev/null; then
+if [[ $EUID -eq 0 ]] && id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
 fi
 

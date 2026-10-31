@@ -54,7 +54,7 @@ if command -v sqlite3 &>/dev/null && [[ -f "$INSTALL_DIR/data/monitor.db" ]]; th
   sqlite3 "$INSTALL_DIR/data/monitor.db" "PRAGMA integrity_check;" 2>/dev/null || true
 fi
 
-if id -u vpsmon &>/dev/null; then
+if [[ $EUID -eq 0 ]] && id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
 fi
 

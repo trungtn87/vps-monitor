@@ -30,7 +30,7 @@ rm -f "${DB_FILE}" "${DB_FILE}-wal" "${DB_FILE}-shm"
 
 # Restore database file
 cp "$BACKUP_FILE" "$DB_FILE"
-if id -u vpsmon &>/dev/null; then
+if [[ $EUID -eq 0 ]] && id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR/data"
 fi
 chmod 600 "$DB_FILE"

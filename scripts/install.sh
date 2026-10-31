@@ -100,18 +100,20 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   echo "IMPORTANT: Please edit $INSTALL_DIR/.env with your actual IPs, TLS certs, and Discord credentials!"
 fi
 
-if id -u vpsmon &>/dev/null; then
+if [[ $EUID -eq 0 ]] && id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
 fi
 chmod 700 "$INSTALL_DIR/data"
 
 echo "===> [5/6] Installing systemd service..."
-if [[ -d /etc/systemd/system ]]; then
+if [[ $EUID -eq 0 && -d /etc/systemd/system ]]; then
   cp "$INSTALL_DIR/ops/systemd/vps-monitor.service" /etc/systemd/system/
   if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null; then
     systemctl daemon-reload
     systemctl enable vps-monitor.service
   fi
+else
+  echo "Notice: Non-root execution or systemd directory not writable; skipping systemd unit installation."
 fi
 
 echo "===> [6/6] Setting up logrotate..."
