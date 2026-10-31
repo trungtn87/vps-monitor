@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { loadConfig } from './common/config.js';
 import { logger } from './common/logger.js';
 import { MonitorDatabase } from './db/database.js';
+import { PgMonitorDatabase } from './db/pgDatabase.js';
 import { SystemCollector } from './agent/collector.js';
 import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
 import { AppHealthChecker } from './agent/appHealth.js';
@@ -29,11 +30,14 @@ export async function createServer(customEnv = null) {
   const serviceStartedAt = Date.now();
   logger.info(`Starting VPS Monitor V1 on [${config.serverName}] (ID: ${config.serverId})`);
 
-  // 1. Initialize SQLite Database
-  const db = new MonitorDatabase(config.dbPath);
+  // Vibe always uses its own dedicated Supabase PostgreSQL project.
+  // VinaHost keeps its existing local SQLite implementation.
+  const db = config.dbBackend === 'supabase_postgres'
+    ? await new PgMonitorDatabase(config.databaseUrl).init()
+    : new MonitorDatabase(config.dbPath);
 
   // 2. Register Local and Peer Servers
-  db.upsertServer({
+  await db.upsertServer({
     serverId: config.serverId,
     name: config.serverName,
     host: config.host,
@@ -43,7 +47,7 @@ export async function createServer(customEnv = null) {
     isLocal: true
   });
 
-  db.upsertServer({
+  await db.upsertServer({
     serverId: config.peerServerId,
     name: config.peerServerName,
     host: config.peerUrl,
@@ -54,7 +58,7 @@ export async function createServer(customEnv = null) {
   });
 
   // 3. Register Local App Service (11Ship or AutoTrade)
-  db.upsertService({
+  await db.upsertService({
     serviceId: config.appServiceId,
     serverId: config.serverId,
     name: config.appServiceName,
@@ -102,11 +106,12 @@ export async function createServer(customEnv = null) {
 
   // Finding 3: AlertEngine with persistent outbox queue
   const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
+  await alertEngine.init();
 
   // 5. Function to package outgoing metrics for heartbeat
-  const getMetricsPayload = () => {
-    const latestMetrics = db.getLatestMetrics(config.serverId);
-    const services = db.getServicesByServer(config.serverId);
+  const getMetricsPayload = async () => {
+    const latestMetrics = await db.getLatestMetrics(config.serverId);
+    const services = await db.getServicesByServer(config.serverId);
     const appService = services.length > 0 ? {
       serviceId: services[0].service_id,
       name: services[0].name,
@@ -207,11 +212,11 @@ export async function createServer(customEnv = null) {
   const runAgentCycle = async () => {
     try {
       const metrics = collector.collect(config.serverId);
-      db.insertMetrics(metrics);
+      await db.insertMetrics(metrics);
 
       // Check app health
       const appRes = await appChecker.check();
-      db.upsertService({
+      await db.upsertService({
         serviceId: config.appServiceId,
         serverId: config.serverId,
         name: config.appServiceName,
@@ -244,9 +249,9 @@ export async function createServer(customEnv = null) {
   };
 
   // Retention cleanup routine
-  const runRetentionCycle = () => {
+  const runRetentionCycle = async () => {
     try {
-      const cleaned = db.cleanOldData(config.retentionDays);
+      const cleaned = await db.cleanOldData(config.retentionDays);
       logger.info(`Retention cleanup executed: ${JSON.stringify(cleaned)}`);
     } catch (err) {
       logger.error('Error running 30-day retention cleanup:', err);
@@ -304,9 +309,7 @@ export async function createServer(customEnv = null) {
       return new Promise((resolve) => {
         stopTimers();
         server.close(() => {
-          db.close();
-          logger.info('VPS Monitor stopped cleanly.');
-          resolve();
+          Promise.resolve(db.close()).then(() => 'VPS Monitor stopped cleanly.')).then(resolve).catch(resolve);
         });
       });
     }
