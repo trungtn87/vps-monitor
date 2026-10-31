@@ -37,11 +37,27 @@ export class PgMonitorDatabase {
     if (!testMode && !directHost && !pooledHost) {
       throw new Error('[DB CONFIG ERROR] DATABASE_URL must target the dedicated VPS-Monitor Supabase project.');
     }
-    this.pool = new Pool({
-      connectionString: url, max: 3, idleTimeoutMillis: 30000,
+    // The Supabase shared Session pooler uses TLS but its server certificate
+    // may not chain to Node's bundled trust store. The documented
+    // sslmode=require profile mandates encryption without CA verification.
+    // Parse the URI into individual parameters: pg's connectionString parser
+    // can silently override an explicit ssl object when sslmode is in the URI.
+    // Never allow an URI option to downgrade a production connection to cleartext.
+    const sslmode = u.searchParams.get('sslmode');
+    if (!testMode && sslmode && sslmode !== 'require') {
+      throw new Error('[DB CONFIG ERROR] VPS-Monitor supports SSL mode=require only on the Supabase pooler.');
+    }
+    const pgOptions = {
+      host: u.hostname,
+      port: Number(u.port || 5432),
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: decodeURIComponent(u.pathname.replace(/^\\//, '') || 'postgres'),
+      max: 3, idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
-      ssl: testMode ? false : { rejectUnauthorized: true }
-    });
+      ssl: testMode ? false : { rejectUnauthorized: false }
+    };
+    this.pool = new Pool(pgOptions);
     this.testMode = testMode;
     this.pool.on('error', () => { /* pool automatically replaces broken idle connections */ });
   }
