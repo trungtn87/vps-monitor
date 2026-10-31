@@ -1,0 +1,61 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { PgMonitorDatabase } from '../../src/db/pgDatabase.js';
+
+const url = process.env.MONITOR_TEST_DATABASE_URL;
+
+test('real PostgreSQL adapter preserves metrics and atomic alert outbox across reopen', { skip: !url }, async () => {
+  const d = await new PgMonitorDatabase(url, { testMode: true }).init();
+  try {
+    await d.upsertServer({
+      serverId: 'pg-ci-monitor', name: 'PG Integration', host: '127.0.0.1',
+      port: 3000, role: 'PRIMARY', isLocal: true, expiryDate: null
+    });
+    await d.upsertService({
+      serviceId: 'pg-ci-autotrade', serverId: 'pg-ci-monitor',
+      name: 'AutoTrade test', status: 'HEALTHY'
+    });
+    await d.insertMetrics({
+      serverId: 'pg-ci-monitor', cpuPct: 15, ramUsedMb: 100, ramTotalMb: 200,
+      ramPct: 50, diskUsedGb: 1, diskTotalGb: 2, diskPct: 50,
+      netRxBytes: 42, netTxBytes: 21, uptimeSec: 360
+    });
+    await d.recordHeartbeat({
+      senderId: 'pg-ci-peer', receiverId: 'pg-ci-monitor', sequence: 1,
+      senderTimestamp: new Date().toISOString(), status: 'VALID'
+    });
+    assert.equal((await d.getLatestMetrics('pg-ci-monitor')).cpu_pct, 15);
+    assert.equal((await d.getMetricsHistory('pg-ci-monitor', 5)).length, 1);
+    assert.equal((await d.getServicesByServer('pg-ci-monitor'))[0].status, 'HEALTHY');
+    assert.equal((await d.getLastHeartbeat('pg-ci-peer')).status, 'VALID');
+    const result = await d.recordAlertTransition({
+      alertKey: 'pg-ci-atomic-1', currentState: 'DISCONNECTED',
+      serverId: 'pg-ci-monitor', eventType: 'HEARTBEAT_LOSS',
+      severity: 'CRITICAL', message: 'Test atomic storage',
+      alertPayload: { title: 'Test' }
+    });
+    assert.ok(result.eventId > 0 && result.outboxId > 0);
+    assert.equal((await d.getAlertState('pg-ci-atomic-1')).current_state, 'DISCONNECTED');
+    assert.ok((await d.getRecentEvents(100)).some(e => e.event_type === 'HEARTBEAT_LOSS'));
+    assert.ok((await d.getPendingAlerts(100)).some(e => e.alert_key === 'pg-ci-atomic-1'));
+
+    // A JSON serialization failure after BEGIN must rollback state and event.
+    await assert.rejects(() => d.recordAlertTransition({
+      alertKey: 'pg-ci-rollback', currentState: 'DISCONNECTED',
+      serverId: 'pg-ci-monitor', eventType: 'HEARTBEAT_LOSS',
+      message: 'Should roll back', alertPayload: { invalid: 1n }
+    }));
+    assert.equal(await d.getAlertState('pg-ci-rollback'), null);
+
+    await d.markAlertDelivered(result.outboxId);
+    assert.ok(!(await d.getPendingAlerts(100)).some(e => e.alert_key === 'pg-ci-atomic-1'));
+  } finally {
+    await d.close();
+  }
+  const reopened = await new PgMonitorDatabase(url, { testMode: true }).init();
+  try {
+    assert.equal((await reopened.getAlertState('pg-ci-atomic-1')).current_state, 'DISCONNECTED');
+    assert.equal((await reopened.getLatestMetrics('pg-ci-monitor')).cpu_pct, 15);
+    await reopened.cleanOldData(30);
+  } finally { await reopened.close(); }
+});
