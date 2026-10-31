@@ -65,6 +65,16 @@ jobs:
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
             -v "$PWD/supabase:/sql:ro" postgres:17 \
             psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/monitor_schema.sql
+      - name: Setup Node for PostgreSQL integration
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install PostgreSQL integration test dependency
+        run: npm install --no-audit --no-fund
+      - name: Verify PostgreSQL transaction and restart persistence
+        env:
+          MONITOR_TEST_DATABASE_URL: postgresql://postgres:monitor_ci_only@127.0.0.1:5432/postgres
+        run: node --test tests/integration/pgDatabase.test.js
       - name: Build Vibe image
         run: docker build -t vps-monitor-vibe-test .
       - name: Start app using real Postgres
