@@ -27,7 +27,7 @@ class MockDiscordNotifier extends DiscordNotifier {
   }
 }
 
-test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', () => {
+test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { disconnectThresholdSec: 180, startupGraceSec: 180 };
   const evaluator = new MonitorEvaluator({ db, config });
@@ -40,7 +40,7 @@ test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', () => {
     status: 'VALID'
   });
 
-  const res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  const res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.ONLINE);
   assert.ok(res.elapsedSec <= 5);
   db.close();
@@ -127,7 +127,7 @@ test('Scenario 3: Heartbeat phục hồi (DISCONNECTED -> RECOVERED alert)', asy
   db.close();
 });
 
-test('Scenario 4: Agent ngừng hoạt động hoặc lỗi (gracefully handled without crashing)', () => {
+test('Scenario 4: Agent ngừng hoạt động hoặc lỗi (gracefully handled without crashing)', async () => {
   const collector = new SystemCollector();
   // Corrupt state artificially to simulate broken collector read
   collector._prevCpu = { totalIdle: 'invalid', totalTick: 'invalid' };
@@ -220,7 +220,7 @@ test('Scenario 6: Một VPS ngừng phản hồi (Detected by peer node)', async
   db.close();
 });
 
-test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network partitioned)', () => {
+test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network partitioned)', async () => {
   const dbA = new MonitorDatabase(':memory:');
   const dbB = new MonitorDatabase(':memory:');
 
@@ -230,8 +230,8 @@ test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network par
   const evalA = new MonitorEvaluator({ db: dbA, config: { disconnectThresholdSec: 180 } });
   const evalB = new MonitorEvaluator({ db: dbB, config: { disconnectThresholdSec: 180 } });
 
-  assert.strictEqual(evalA.evaluatePeerHeartbeat('nhanhoa').state, NodeState.ONLINE);
-  assert.strictEqual(evalB.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
+  assert.strictEqual(await evalA.evaluatePeerHeartbeat('nhanhoa').state, NodeState.ONLINE);
+  assert.strictEqual(await evalB.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
 
   dbA.close();
   dbB.close();
@@ -418,7 +418,7 @@ test('Scenario 11: Ngày hết hạn vượt từng ngưỡng (Mỗi mốc báo 
   db.close();
 });
 
-test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed payload rejected safely)', () => {
+test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed payload rejected safely)', async () => {
   const db = new MonitorDatabase(':memory:');
   const receiver = new HeartbeatReceiver({
     serverId: 'vinahost',
@@ -426,8 +426,8 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     db
   });
 
-  assert.strictEqual(receiver.processHeartbeat(null, 'sig').valid, false);
-  assert.strictEqual(receiver.processHeartbeat({ sequence: 1 }, 'sig').valid, false);
+  assert.strictEqual(await receiver.processHeartbeat(null, 'sig').valid, false);
+  assert.strictEqual(await receiver.processHeartbeat({ sequence: 1 }, 'sig').valid, false);
 
   const wrongReceiverPayload = {
     senderId: 'nhanhoa',
@@ -436,12 +436,12 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     timestamp: new Date().toISOString(),
     nonce: '123'
   };
-  assert.strictEqual(receiver.processHeartbeat(wrongReceiverPayload, 'sig').code, 403);
+  assert.strictEqual(await receiver.processHeartbeat(wrongReceiverPayload, 'sig').code, 403);
 
   db.close();
 });
 
-test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', () => {
+test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', async () => {
   // Case A: Missing credentials fail closed
   const closedGuard = new AuthGuard({ user: 'admin', pass: '', apiToken: '' });
   assert.strictEqual(closedGuard.isAuthorized({ headers: {} }), false);
@@ -461,7 +461,7 @@ test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', (
   assert.strictEqual(guard.isAuthorized({ headers: { authorization: `Bearer ${goodBearer}` } }), true);
 });
 
-test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 signature)', () => {
+test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 signature)', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { serverId: 'vinahost', serverName: 'VinaHost', disconnectThresholdSec: 180 };
   const evaluator = new MonitorEvaluator({ db, config });
@@ -470,14 +470,14 @@ test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 sig
   const dummyPubKey = '00'.repeat(32);
   const handler = new DiscordInteractionsHandler({ publicKey: dummyPubKey, commands });
 
-  const res = handler.handle('{"type":1}', 'bad-sig', '1690000000');
+  const res = await handler.handle('{"type":1}', 'bad-sig', '1690000000');
   assert.strictEqual(res.status, 401);
   assert.strictEqual(res.body, 'Invalid request signature');
 
   db.close();
 });
 
-test('Scenario 15: Lịch sử dữ liệu quá 30 ngày (Automatically pruned by retention)', () => {
+test('Scenario 15: Lịch sử dữ liệu quá 30 ngày (Automatically pruned by retention)', async () => {
   const db = new MonitorDatabase(':memory:');
   db.upsertServer({ serverId: 'vinahost', name: 'VinaHost', host: 'localhost', port: 5050, isLocal: true });
 
@@ -576,7 +576,7 @@ test('Finding 4 Special: Silent boot-time failure alert when peer never connects
   db.close();
 });
 
-test('Finding 6 Special: Atomic Online SQLite Backup (VACUUM INTO) creates valid consistent snapshot', () => {
+test('Finding 6 Special: Atomic Online SQLite Backup (VACUUM INTO) creates valid consistent snapshot', async () => {
   const srcDbFile = join(tmpdir(), `test-src-db-${Date.now()}.db`);
   const destDbFile = join(tmpdir(), `test-dest-db-${Date.now()}.db`);
   if (existsSync(srcDbFile)) rmSync(srcDbFile);
