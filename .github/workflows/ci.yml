@@ -68,6 +68,9 @@ jobs:
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
             -v "$PWD/supabase:/sql:ro" postgres:17 \
             psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/hosting_quota.sql
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/vibe_container_sums.sql
       - name: Setup Node for PostgreSQL integration
         uses: actions/setup-node@v4
         with:
