@@ -309,7 +309,9 @@ export async function createServer(customEnv = null) {
       return new Promise((resolve) => {
         stopTimers();
         server.close(() => {
-          Promise.resolve(db.close()).then(() => 'VPS Monitor stopped cleanly.')).then(resolve).catch(resolve);
+          Promise.resolve(db.close())
+            .then(() => { logger.info('VPS Monitor stopped cleanly.'); resolve(); })
+            .catch(err => { logger.error('Error closing Monitor database:', err); resolve(); });
         });
       });
     }
