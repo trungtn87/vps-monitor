@@ -8,7 +8,7 @@ import { HttpRouter } from '../../src/web/routes.js';
 import { AuthGuard } from '../../src/web/auth.js';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
-test('Blocker 2: recordAlertTransition executes in a single atomic transaction', () => {
+test('Blocker 2: recordAlertTransition executes in a single atomic transaction', async () => {
   const db = new MonitorDatabase(':memory:');
   db.upsertServer({ serverId: 'vinahost', name: 'VinaHost', role: '11ship' });
 
@@ -157,7 +157,7 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
   db.close();
 });
 
-test('Blocker 5: Discord interactions fail-closed in production when allowlist is empty', () => {
+test('Blocker 5: Discord interactions fail-closed in production when allowlist is empty', async () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pubKeyHex = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('hex');
 
@@ -185,7 +185,7 @@ test('Blocker 5: Discord interactions fail-closed in production when allowlist i
   const timestamp = String(Math.floor(Date.now() / 1000));
   const sig = sign(null, Buffer.from(timestamp + interactionBody), privateKey).toString('hex');
 
-  const prodRes = prodHandler.handle(interactionBody, sig, timestamp);
+  const prodRes = await prodHandler.handle(interactionBody, sig, timestamp);
   assert.equal(prodRes.status, 200);
   assert.match(prodRes.body.data.content, /Chế độ production yêu cầu cấu hình danh sách được phép/);
 
@@ -198,7 +198,7 @@ test('Blocker 5: Discord interactions fail-closed in production when allowlist i
     nodeEnv: 'development'
   });
 
-  const devRes = devHandler.handle(interactionBody, sig, timestamp);
+  const devRes = await devHandler.handle(interactionBody, sig, timestamp);
   assert.equal(devRes.status, 200);
   assert.equal(devRes.body.data.content, 'OK');
 });
