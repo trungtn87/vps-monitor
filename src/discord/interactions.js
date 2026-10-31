@@ -25,7 +25,7 @@ export class DiscordInteractionsHandler {
    * @param {string} timestamp 
    * @returns {{ status: number, body: object|string }}
    */
-  handle(rawBody, signature, timestamp) {
+  async handle(rawBody, signature, timestamp) {
     // 1. Signature Verification
     if (!this.publicKey) {
       logger.warn('Discord interactions called but DISCORD_PUBLIC_KEY is not configured');
@@ -98,7 +98,7 @@ export class DiscordInteractionsHandler {
 
       const commandName = data.data.name;
       logger.info(`Discord slash command received: /${commandName}`);
-      const response = this.commands.dispatch(commandName);
+      const response = await this.commands.dispatch(commandName);
       return { status: 200, body: response };
     }
 

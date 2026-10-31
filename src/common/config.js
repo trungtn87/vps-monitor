@@ -8,6 +8,22 @@ export function loadConfig(env = process.env) {
   const apiToken = env.API_TOKEN || '';
   const requireTls = env.REQUIRE_TLS === 'true' || env.REQUIRE_TLS === '1';
   const allowInsecureHttp = env.ALLOW_INSECURE_HTTP === 'true' || env.ALLOW_INSECURE_HTTP === '1';
+  // Vibe Hosting terminates public HTTPS before forwarding private HTTP to the app.
+  // Explicit opt-in only; the runtime must never expose its container port directly.
+  const vibeHosting = env.VIBE_HOSTING === 'true';
+  const trustedPlatformProxy = env.TRUSTED_PLATFORM_PROXY === 'true';
+  const publicDashboard = env.PUBLIC_DASHBOARD === 'true';
+  const dbBackend = env.DB_BACKEND || (vibeHosting && nodeEnv === 'production' ? 'supabase_postgres' : 'sqlite');
+  const databaseUrl = env.DATABASE_URL || '';
+  // This repository's Nhân Hòa deployment belongs to account 81.
+  // Use the exact provider API observed by the owner; never browser cookies.
+  // No requests are made by unit tests or VinaHost.
+  const vibeQuotaEnabled = vibeHosting && serverId === 'nhanhoa' &&
+    nodeEnv === 'production' && env.VIBE_QUOTA_DISABLED !== 'true';
+  const vibeQuotaUserId = env.VIBE_QUOTA_USER_ID || (vibeQuotaEnabled ? '81' : '');
+  const vibeQuotaUrl = env.VIBE_QUOTA_URL || (vibeQuotaEnabled
+    ? 'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81'
+    : '');
   const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
@@ -15,11 +31,27 @@ export function loadConfig(env = process.env) {
     if (!heartbeatSecret || heartbeatSecret === 'dev-secret-change-in-production' || heartbeatSecret.length < 32) {
       throw new Error('[SECURITY FATAL] HEARTBEAT_SECRET must be set and contain at least 32 characters in production.');
     }
-    if (!dashboardPass && !apiToken) {
+    if (vibeHosting && dbBackend !== 'supabase_postgres') {
+      throw new Error('[DB CONFIG ERROR] Production Vibe requires DB_BACKEND=supabase_postgres; SQLite is not supported.');
+    }
+    if (dbBackend === 'supabase_postgres' && !databaseUrl) {
+      throw new Error('[DB CONFIG ERROR] DATABASE_URL required for Supabase PostgreSQL.');
+    }
+    // Read-only public dashboard can also run behind VinaHost's local-only
+    // Nginx HTTPS reverse proxy. Mutating APIs retain their own signatures.
+    const safePublicReadProxy = trustedPlatformProxy && !requireTls &&
+      (vibeHosting ? host === '0.0.0.0' : host === '127.0.0.1');
+    if (publicDashboard && !safePublicReadProxy) {
+      throw new Error('[SECURITY FATAL] PUBLIC_DASHBOARD=true requires a trusted HTTPS reverse proxy and a safe listener.');
+    }
+    if (!publicDashboard && !dashboardPass && !apiToken) {
       throw new Error('[SECURITY FATAL] DASHBOARD_PASS or API_TOKEN must be configured in production (fail-closed authentication).');
     }
+    if (vibeHosting && (!trustedPlatformProxy || requireTls || host !== '0.0.0.0')) {
+      throw new Error('[SECURITY FATAL] VIBE_HOSTING needs TRUSTED_PLATFORM_PROXY=true, REQUIRE_TLS=false, HOST=0.0.0.0 behind the platform HTTPS ingress.');
+    }
     // Review Round 3: Prevent unencrypted public HTTP when terminating TLS via reverse proxy
-    if (!requireTls && host === '0.0.0.0' && !allowInsecureHttp) {
+    if (!requireTls && host === '0.0.0.0' && !allowInsecureHttp && !(vibeHosting && trustedPlatformProxy)) {
       throw new Error(
         '[SECURITY FATAL] Binding to 0.0.0.0 with REQUIRE_TLS=false in production exposes unencrypted HTTP to the public internet. ' +
         'Under Nginx/Caddy reverse proxy TLS termination, set HOST=127.0.0.1. ' +
@@ -37,6 +69,18 @@ export function loadConfig(env = process.env) {
     // Server Identification
     serverId,
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
+    vibeHosting,
+    vibeQuotaUrl,
+    vibeQuotaAccessToken: env.VIBE_QUOTA_ACCESS_TOKEN || '',
+    vibeQuotaUserId,
+    publicDashboard,
+    dbBackend,
+    databaseUrl,
+    // Customer-confirmed Vibe Starter plan; separate from measured app use.
+    vibePlanCpuVcpu: parseFloat(env.VIBE_PLAN_CPU_VCPU || '1'),
+    vibePlanRamMb: parseFloat(env.VIBE_PLAN_RAM_MB || '2048'),
+    metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
+    peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
     port: parseInt(env.PORT || '5050', 10),
     dbPath: env.DB_PATH || (nodeEnv === 'test' ? ':memory:' : './data/monitor.db'),

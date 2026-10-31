@@ -16,16 +16,20 @@ export class AlertEngine {
     this.config = config;
     this._lastEvaluatedMetricId = {};
 
+  }
+
+  // Restore tracker after the optional PostgreSQL backend has connected.
+  async init() {
     // Blocker 5: Restore last evaluated metric ID from SQLite alert_state to survive restarts
     try {
-      const evalState = this.db.getAlertState(`${this.config.serverId}:resource_eval`);
+      const evalState = await this.db.getAlertState(`${this.config.serverId}:resource_eval`);
       if (evalState && evalState.details_json) {
         const parsed = JSON.parse(evalState.details_json);
         if (parsed.last_metric_id) {
           this._lastEvaluatedMetricId[this.config.serverId] = parsed.last_metric_id;
         }
       } else {
-        const cpuState = this.db.getAlertState(`${this.config.serverId}:cpu`);
+        const cpuState = await this.db.getAlertState(`${this.config.serverId}:cpu`);
         if (cpuState && cpuState.details_json) {
           const parsed = JSON.parse(cpuState.details_json);
           if (parsed.last_metric_id) {
@@ -45,7 +49,7 @@ export class AlertEngine {
    */
   async dispatchAlert(alertKey, embed) {
     try {
-      this.db.queueAlert({ alertKey, payload: embed });
+      await this.db.queueAlert({ alertKey, payload: embed });
     } catch (err) {
       logger.error(`Error queueing alert ${alertKey} to outbox:`, err);
     }
@@ -59,7 +63,9 @@ export class AlertEngine {
   async processOutbox() {
     let pendingAlerts;
     try {
-      pendingAlerts = this.db.getPendingAlerts(10);
+      pendingAlerts = this.db.claimPendingAlerts
+        ? await this.db.claimPendingAlerts(10)
+        : await this.db.getPendingAlerts(10);
     } catch (err) {
       logger.error('Error fetching pending alerts from outbox:', err);
       return;
@@ -70,26 +76,26 @@ export class AlertEngine {
       try {
         payload = JSON.parse(alert.payload_json);
       } catch {
-        this.db.markAlertDelivered(alert.id); // discard corrupt json
+        await this.db.markAlertDelivered(alert.id); // discard corrupt json
         continue;
       }
 
       try {
         const delivered = await this.notifier.sendAlert(payload);
         if (delivered) {
-          this.db.markAlertDelivered(alert.id);
+          await this.db.markAlertDelivered(alert.id);
           logger.debug(`Alert #${alert.id} (${alert.alert_key}) delivered successfully.`);
         } else {
           // Discord returned false / rate limited: backoff 10s -> 300s
           const attempts = alert.attempts + 1;
           const nextRetrySec = Math.min(300, Math.max(10, Math.pow(2, attempts) * 5));
-          this.db.markAlertRetry(alert.id, attempts, nextRetrySec, 'Delivery returned false or rate limited');
+          await this.db.markAlertRetry(alert.id, attempts, nextRetrySec, 'Delivery returned false or rate limited');
           logger.warn(`Alert #${alert.id} delivery failed; scheduled retry in ${nextRetrySec}s (attempt ${attempts})`);
         }
       } catch (err) {
         const attempts = alert.attempts + 1;
         const nextRetrySec = Math.min(300, Math.max(10, Math.pow(2, attempts) * 5));
-        this.db.markAlertRetry(alert.id, attempts, nextRetrySec, err.message);
+        await this.db.markAlertRetry(alert.id, attempts, nextRetrySec, err.message);
         logger.error(`Exception delivering alert #${alert.id}:`, err);
       }
     }
@@ -113,10 +119,10 @@ export class AlertEngine {
    */
   async checkPeerHeartbeat() {
     const peerId = this.config.peerServerId;
-    const { state, elapsedSec, lastReceivedAt, isStartupFailure } = this.evaluator.evaluatePeerHeartbeat(peerId);
+    const { state, elapsedSec, lastReceivedAt, isStartupFailure } = await this.evaluator.evaluatePeerHeartbeat(peerId);
 
     const alertKey = `${peerId}:heartbeat`;
-    const recorded = this.db.getAlertState(alertKey);
+    const recorded = await this.db.getAlertState(alertKey);
     const prevState = recorded ? recorded.current_state : NodeState.UNKNOWN;
 
     // Transition: became DISCONNECTED
@@ -139,7 +145,7 @@ export class AlertEngine {
       };
 
       // Atomic transition + outbox enqueue (Blocker 2)
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: NodeState.DISCONNECTED,
         consecutiveCount: 1,
@@ -171,7 +177,7 @@ export class AlertEngine {
       };
 
       // Atomic transition + outbox enqueue (Blocker 2)
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: NodeState.ONLINE,
         consecutiveCount: 1,
@@ -188,7 +194,7 @@ export class AlertEngine {
     }
     // If ONLINE and was already ONLINE (or initial UNKNOWN transition to ONLINE)
     else if (state === NodeState.ONLINE && prevState !== NodeState.ONLINE && prevState !== NodeState.DISCONNECTED) {
-      this.db.setAlertState(alertKey, NodeState.ONLINE, 1, { lastReceivedAt });
+      await this.db.setAlertState(alertKey, NodeState.ONLINE, 1, { lastReceivedAt });
     }
   }
 
@@ -197,8 +203,8 @@ export class AlertEngine {
    */
   async checkLocalAgentHealth() {
     const alertKey = `${this.config.serverId}:agent_health`;
-    const latestMetrics = this.db.getLatestMetrics(this.config.serverId);
-    const recorded = this.db.getAlertState(alertKey);
+    const latestMetrics = await this.db.getLatestMetrics(this.config.serverId);
+    const recorded = await this.db.getAlertState(alertKey);
     const prevState = recorded ? recorded.current_state : 'HEALTHY';
 
     let isStale = false;
@@ -227,7 +233,7 @@ export class AlertEngine {
         ]
       };
 
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: 'STALE',
         consecutiveCount: 1,
@@ -250,7 +256,7 @@ export class AlertEngine {
         fields: [{ name: 'VPS', value: this.config.serverName, inline: true }]
       };
 
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: 'HEALTHY',
         consecutiveCount: 1,
@@ -271,12 +277,12 @@ export class AlertEngine {
    * Check local app service health (11Ship or AutoTrade)
    */
   async checkLocalAppHealth() {
-    const services = this.db.getServicesByServer(this.config.serverId);
+    const services = await this.db.getServicesByServer(this.config.serverId);
     for (const svc of services) {
       if (svc.status === 'DISABLED') continue;
 
       const alertKey = `${svc.service_id}:health`;
-      const recorded = this.db.getAlertState(alertKey);
+      const recorded = await this.db.getAlertState(alertKey);
       const prevState = recorded ? recorded.current_state : 'HEALTHY';
 
       if ((svc.status === 'UNHEALTHY' || svc.status === 'UNREACHABLE') && prevState !== svc.status) {
@@ -292,7 +298,7 @@ export class AlertEngine {
           ]
         };
 
-        this.db.recordAlertTransition({
+        await this.db.recordAlertTransition({
           alertKey,
           currentState: svc.status,
           consecutiveCount: 1,
@@ -318,7 +324,7 @@ export class AlertEngine {
           ]
         };
 
-        this.db.recordAlertTransition({
+        await this.db.recordAlertTransition({
           alertKey,
           currentState: 'HEALTHY',
           consecutiveCount: 1,
@@ -341,7 +347,7 @@ export class AlertEngine {
    */
   async checkResources() {
     const serverId = this.config.serverId;
-    const { cpuAlert, ramAlert, diskAlert, metrics } = this.evaluator.evaluateResources(serverId);
+    const { cpuAlert, ramAlert, diskAlert, metrics } = await this.evaluator.evaluateResources(serverId);
     if (!metrics) return;
 
     // Blocker 5 & Finding 8: Only process new distinct metric snapshots
@@ -351,7 +357,7 @@ export class AlertEngine {
     if (metrics.id) {
       this._lastEvaluatedMetricId[serverId] = metrics.id;
       // Persist to alert_state immediately so restarts don't re-evaluate
-      this.db.setAlertState(`${serverId}:resource_eval`, 'TRACKING', 0, { last_metric_id: metrics.id });
+      await this.db.setAlertState(`${serverId}:resource_eval`, 'TRACKING', 0, { last_metric_id: metrics.id });
     }
 
     const resourceChecks = [
@@ -361,7 +367,7 @@ export class AlertEngine {
     ];
 
     for (const r of resourceChecks) {
-      const recorded = this.db.getAlertState(r.key);
+      const recorded = await this.db.getAlertState(r.key);
       const prevCount = recorded ? recorded.consecutive_count : 0;
       const prevState = recorded ? recorded.current_state : 'NORMAL';
 
@@ -381,7 +387,7 @@ export class AlertEngine {
           };
 
           // Blocker 2 & 5: Atomic transition + persist last_metric_id
-          this.db.recordAlertTransition({
+          await this.db.recordAlertTransition({
             alertKey: r.key,
             currentState: 'ALERTING',
             consecutiveCount: newCount,
@@ -397,7 +403,7 @@ export class AlertEngine {
           await this.processOutbox();
         } else {
           // Blocker 5: Preserve consecutive count and metric ID across restarts
-          this.db.updateAlertCount(r.key, newCount, { last_metric_id: metrics.id, value: r.val });
+          await this.db.updateAlertCount(r.key, newCount, { last_metric_id: metrics.id, value: r.val });
         }
       } else {
         if (prevState === 'ALERTING') {
@@ -412,7 +418,7 @@ export class AlertEngine {
             ]
           };
 
-          this.db.recordAlertTransition({
+          await this.db.recordAlertTransition({
             alertKey: r.key,
             currentState: 'NORMAL',
             consecutiveCount: 0,
@@ -427,67 +433,53 @@ export class AlertEngine {
 
           await this.processOutbox();
         } else if (prevCount > 0) {
-          this.db.updateAlertCount(r.key, 0);
+          await this.db.updateAlertCount(r.key, 0);
         }
       }
     }
   }
 
   /**
-   * Check VPS expiry dates (30, 15, 7, 3, 1 days & overdue)
+   * Send one Discord reminder on D-1 (Vietnam calendar day).
+   * The persisted alert key is unique per server/date, preventing repeats
+   * across the 30-second alert cycle and subsequent process restarts.
    */
   async checkExpiry() {
     const serverId = this.config.serverId;
     const expiryDate = this.config.expiryDate;
     if (!expiryDate) return;
 
-    const { daysRemaining, thresholdHit, isOverdue } = this.evaluator.evaluateExpiry(expiryDate);
-    if (thresholdHit === null || daysRemaining === null) return;
+    const { daysRemaining, thresholdHit } = this.evaluator.evaluateExpiry(expiryDate);
+    if (thresholdHit !== 1 || daysRemaining !== 1) return;
 
-    const milestoneTag = isOverdue ? 'overdue' : `${thresholdHit}d`;
-    const alertKey = `expiry:${serverId}:${expiryDate}:${milestoneTag}`;
-    const recorded = this.db.getAlertState(alertKey);
+    const alertKey = `expiry:${serverId}:${expiryDate}:1d`;
+    const recorded = await this.db.getAlertState(alertKey);
+    if (recorded?.current_state === 'ALERTED') return;
 
-    if (recorded && recorded.current_state === 'ALERTED') {
-      return;
-    }
-
-    let title, message, color;
-    if (isOverdue) {
-      title = '🚨 CẢNH BÁO KHẨN: VPS ĐÃ QUÁ HẠN!';
-      message = `🚨 VPS [${this.config.serverName}] đã QUÁ HẠN vào ngày ${expiryDate} (quá hạn ${Math.abs(daysRemaining)} ngày). Cần gia hạn ngay lập tức!`;
-      color = 0xE74C3C;
-    } else {
-      title = '⏰ CẢNH BÁO: VPS SẮP HẾT HẠN';
-      message = `⏰ VPS [${this.config.serverName}] sắp hết hạn vào ngày ${expiryDate} (còn ${daysRemaining} ngày). Mốc cảnh báo: ${thresholdHit} ngày.`;
-      color = daysRemaining <= 3 ? 0xE74C3C : 0xF1C40F;
-    }
-
+    const message = `⏰ Dịch vụ [${this.config.serverName}] sẽ đến hạn thanh toán ngày ${expiryDate} (còn 1 ngày). Vui lòng thanh toán hoặc gia hạn.`;
     const alertPayload = {
-      title,
+      title: '⏰ NHẮC THANH TOÁN TRƯỚC 1 NGÀY',
       description: message,
-      color,
+      color: 0xF1C40F,
       fields: [
-        { name: 'VPS', value: this.config.serverName, inline: true },
-        { name: 'Ngày hết hạn', value: expiryDate, inline: true },
-        { name: 'Tình trạng', value: isOverdue ? `Đã quá ${Math.abs(daysRemaining)} ngày` : `Còn lại ${daysRemaining} ngày`, inline: true }
+        { name: 'Dịch vụ', value: this.config.serverName, inline: true },
+        { name: 'Hạn thanh toán', value: expiryDate, inline: true },
+        { name: 'Còn lại', value: '1 ngày', inline: true }
       ]
     };
 
-    // Blocker 2: Atomic transition + outbox queue
-    this.db.recordAlertTransition({
+    await this.db.recordAlertTransition({
       alertKey,
       currentState: 'ALERTED',
       consecutiveCount: 1,
-      details: { expiryDate, daysRemaining, milestone: milestoneTag },
+      details: { expiryDate, daysRemaining, milestone: '1d' },
       serverId,
       eventType: 'EXPIRY_WARNING',
-      severity: (daysRemaining <= 3 || isOverdue) ? 'CRITICAL' : 'WARNING',
+      severity: 'WARNING',
       message,
-      eventDetails: { expiryDate, daysRemaining, milestone: milestoneTag },
+      eventDetails: { expiryDate, daysRemaining, milestone: '1d' },
       alertPayload
     });
-
     await this.processOutbox();
   }
 }

@@ -4,7 +4,11 @@ import { readFileSync, existsSync } from 'node:fs';
 import { loadConfig } from './common/config.js';
 import { logger } from './common/logger.js';
 import { MonitorDatabase } from './db/database.js';
+import { PgMonitorDatabase } from './db/pgDatabase.js';
 import { SystemCollector } from './agent/collector.js';
+import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
+import { VibeQuotaClient } from './agent/vibeQuotaClient.js';
+import { AutoTradeContainerClient, composeVibeContainerSum } from './agent/autoTradeContainerClient.js';
 import { AppHealthChecker } from './agent/appHealth.js';
 import { HeartbeatClient } from './monitor/heartbeatClient.js';
 import { HeartbeatReceiver } from './monitor/heartbeatReceiver.js';
@@ -28,11 +32,14 @@ export async function createServer(customEnv = null) {
   const serviceStartedAt = Date.now();
   logger.info(`Starting VPS Monitor V1 on [${config.serverName}] (ID: ${config.serverId})`);
 
-  // 1. Initialize SQLite Database
-  const db = new MonitorDatabase(config.dbPath);
+  // Vibe always uses its own dedicated Supabase PostgreSQL project.
+  // VinaHost keeps its existing local SQLite implementation.
+  const db = config.dbBackend === 'supabase_postgres'
+    ? await new PgMonitorDatabase(config.databaseUrl, { testMode: config.nodeEnv === 'test' }).init()
+    : new MonitorDatabase(config.dbPath);
 
   // 2. Register Local and Peer Servers
-  db.upsertServer({
+  await db.upsertServer({
     serverId: config.serverId,
     name: config.serverName,
     host: config.host,
@@ -42,7 +49,7 @@ export async function createServer(customEnv = null) {
     isLocal: true
   });
 
-  db.upsertServer({
+  await db.upsertServer({
     serverId: config.peerServerId,
     name: config.peerServerName,
     host: config.peerUrl,
@@ -53,7 +60,7 @@ export async function createServer(customEnv = null) {
   });
 
   // 3. Register Local App Service (11Ship or AutoTrade)
-  db.upsertService({
+  await db.upsertService({
     serviceId: config.appServiceId,
     serverId: config.serverId,
     name: config.appServiceName,
@@ -62,7 +69,10 @@ export async function createServer(customEnv = null) {
   });
 
   // 4. Initialize Components
-  const collector = new SystemCollector();
+  const collector = config.vibeHosting ? new VibeContainerCollector() : new SystemCollector();
+  // Nhân Hòa's two independent Vibe apps; read-only, fixed public HTTPS URL.
+  const autoTradeUsageClient = config.vibeHosting && config.serverId === 'nhanhoa'
+    ? new AutoTradeContainerClient() : null;
   const appChecker = new AppHealthChecker(
     config.appServiceId,
     config.appServiceName,
@@ -101,11 +111,12 @@ export async function createServer(customEnv = null) {
 
   // Finding 3: AlertEngine with persistent outbox queue
   const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
+  await alertEngine.init();
 
   // 5. Function to package outgoing metrics for heartbeat
-  const getMetricsPayload = () => {
-    const latestMetrics = db.getLatestMetrics(config.serverId);
-    const services = db.getServicesByServer(config.serverId);
+  const getMetricsPayload = async () => {
+    const latestMetrics = await db.getLatestMetrics(config.serverId);
+    const services = await db.getServicesByServer(config.serverId);
     const appService = services.length > 0 ? {
       serviceId: services[0].service_id,
       name: services[0].name,
@@ -114,9 +125,10 @@ export async function createServer(customEnv = null) {
       error: services[0].last_error
     } : null;
 
-    if (!latestMetrics) return { appService };
+    if (!latestMetrics) return { appService, metricScope: config.metricScope };
 
     return {
+      metricScope: config.metricScope,
       cpuPct: latestMetrics.cpu_pct,
       ramUsedMb: latestMetrics.ram_used_mb,
       ramTotalMb: latestMetrics.ram_total_mb,
@@ -169,7 +181,15 @@ export async function createServer(customEnv = null) {
         const cert = readFileSync(config.tlsCertPath);
         const key = readFileSync(config.tlsKeyPath);
         server = https.createServer({ cert, key }, (req, res) => {
-          router.handleRequest(req, res);
+          Promise.resolve(router.handleRequest(req, res)).catch(err => {
+            logger.error('Monitor request failed:', err);
+            if (!res.headersSent) {
+              res.writeHead(503, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Monitor database temporarily unavailable' }));
+            } else if (!res.writableEnded) {
+              res.end();
+            }
+          });
         });
         logger.info('TLS certificate and key loaded successfully. Starting HTTPS server.');
       } catch (err) {
@@ -191,9 +211,36 @@ export async function createServer(customEnv = null) {
       throw new Error('[SECURITY FATAL] REQUIRE_TLS is enabled but TLS certificates could not be loaded.');
     }
     server = http.createServer((req, res) => {
-      router.handleRequest(req, res);
+      Promise.resolve(router.handleRequest(req, res)).catch(err => {
+        logger.error('Monitor request failed:', err);
+        if (!res.headersSent) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Monitor database temporarily unavailable' }));
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      });
     });
   }
+
+  // Optional provider quota API. If access is not approved/available,
+  // keep original container metrics and never claim hosting-wide totals.
+  const quotaClient = config.vibeHosting && config.vibeQuotaUrl
+    ? new VibeQuotaClient({
+        url: config.vibeQuotaUrl,
+        token: config.vibeQuotaAccessToken,
+        expectedUserId: config.vibeQuotaUserId
+      }) : null;
+  let quotaTimer = null;
+  const runQuotaCycle = async () => {
+    if (!quotaClient) return;
+    try {
+      const quota = await quotaClient.read();
+      await db.insertHostingQuota(config.serverId, quota);
+    } catch (err) {
+      logger.warn(`Vibe hosting quota collection unavailable: ${String(err.message).slice(0,90).replace(/[^A-Z0-9_ ]/gi, '')}`);
+    }
+  };
 
   // 7. Interval Loops
   let agentTimer = null;
@@ -205,11 +252,11 @@ export async function createServer(customEnv = null) {
   const runAgentCycle = async () => {
     try {
       const metrics = collector.collect(config.serverId);
-      db.insertMetrics(metrics);
+      await db.insertMetrics(metrics);
 
       // Check app health
       const appRes = await appChecker.check();
-      db.upsertService({
+      await db.upsertService({
         serviceId: config.appServiceId,
         serverId: config.serverId,
         name: config.appServiceName,
@@ -218,6 +265,27 @@ export async function createServer(customEnv = null) {
         lastCheck: new Date().toISOString(),
         lastError: appRes.error
       });
+
+      // Failed/missing samples do not overwrite the last valid aggregate.
+      // The UI marks the last valid record stale after 180 seconds.
+      if (autoTradeUsageClient) {
+        try {
+          const remote = await autoTradeUsageClient.read();
+          const local = {
+            name:'VPS Monitor',appId:'vps-monitor',
+            cpuVcpu:Math.round(metrics.cpuPct*1000)/100000,
+            ramUsedMb:metrics.ramUsedMb,
+            ramLimitMb:metrics.ramTotalMb>0 ? metrics.ramTotalMb : null,
+            sourceCpu:'PROCESS',sourceRam:metrics.ramTotalMb>0?'CGROUP_V2':'PROCESS',
+            sampledAt:new Date().toISOString()
+          };
+          const total=composeVibeContainerSum(local,remote);
+          await db.insertVibeContainerSum(config.serverId,total);
+        } catch (err) {
+          logger.warn('AutoTrade container usage unavailable: '+
+            String(err.message).replace(/[^A-Za-z0-9_ ]/g,'').slice(0,70));
+        }
+      }
     } catch (err) {
       logger.error('Error during local agent collection cycle:', err);
     }
@@ -242,9 +310,9 @@ export async function createServer(customEnv = null) {
   };
 
   // Retention cleanup routine
-  const runRetentionCycle = () => {
+  const runRetentionCycle = async () => {
     try {
-      const cleaned = db.cleanOldData(config.retentionDays);
+      const cleaned = await db.cleanOldData(config.retentionDays);
       logger.info(`Retention cleanup executed: ${JSON.stringify(cleaned)}`);
     } catch (err) {
       logger.error('Error running 30-day retention cleanup:', err);
@@ -254,9 +322,11 @@ export async function createServer(customEnv = null) {
   const startTimers = () => {
     // Immediate first runs
     runAgentCycle();
+    runQuotaCycle();
     runRetentionCycle();
 
     agentTimer = setInterval(runAgentCycle, config.heartbeatIntervalSec * 1000);
+    if (quotaClient) quotaTimer = setInterval(runQuotaCycle, 60000);
     heartbeatTimer = setInterval(runHeartbeatCycle, config.heartbeatIntervalSec * 1000);
     alertTimer = setInterval(runAlertCycle, 30 * 1000); // Check connectivity & alerts every 30s
     retentionTimer = setInterval(runRetentionCycle, 24 * 60 * 60 * 1000); // Daily retention
@@ -264,6 +334,7 @@ export async function createServer(customEnv = null) {
 
   const stopTimers = () => {
     if (agentTimer) clearInterval(agentTimer);
+    if (quotaTimer) clearInterval(quotaTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (alertTimer) clearInterval(alertTimer);
     if (retentionTimer) clearInterval(retentionTimer);
@@ -283,6 +354,7 @@ export async function createServer(customEnv = null) {
     commands,
     discordInteractions,
     runAgentCycle,
+    runQuotaCycle,
     runHeartbeatCycle,
     runAlertCycle,
     runRetentionCycle,
@@ -302,9 +374,9 @@ export async function createServer(customEnv = null) {
       return new Promise((resolve) => {
         stopTimers();
         server.close(() => {
-          db.close();
-          logger.info('VPS Monitor stopped cleanly.');
-          resolve();
+          Promise.resolve(db.close())
+            .then(() => { logger.info('VPS Monitor stopped cleanly.'); resolve(); })
+            .catch(err => { logger.error('Error closing Monitor database:', err); resolve(); });
         });
       });
     }

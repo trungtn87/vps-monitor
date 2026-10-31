@@ -27,7 +27,7 @@ class MockDiscordNotifier extends DiscordNotifier {
   }
 }
 
-test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', () => {
+test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { disconnectThresholdSec: 180, startupGraceSec: 180 };
   const evaluator = new MonitorEvaluator({ db, config });
@@ -40,7 +40,7 @@ test('Scenario 1: Heartbeat bình thường (<= 60s -> ONLINE)', () => {
     status: 'VALID'
   });
 
-  const res = evaluator.evaluatePeerHeartbeat('nhanhoa');
+  const res = await evaluator.evaluatePeerHeartbeat('nhanhoa');
   assert.strictEqual(res.state, NodeState.ONLINE);
   assert.ok(res.elapsedSec <= 5);
   db.close();
@@ -127,7 +127,7 @@ test('Scenario 3: Heartbeat phục hồi (DISCONNECTED -> RECOVERED alert)', asy
   db.close();
 });
 
-test('Scenario 4: Agent ngừng hoạt động hoặc lỗi (gracefully handled without crashing)', () => {
+test('Scenario 4: Agent ngừng hoạt động hoặc lỗi (gracefully handled without crashing)', async () => {
   const collector = new SystemCollector();
   // Corrupt state artificially to simulate broken collector read
   collector._prevCpu = { totalIdle: 'invalid', totalTick: 'invalid' };
@@ -220,7 +220,7 @@ test('Scenario 6: Một VPS ngừng phản hồi (Detected by peer node)', async
   db.close();
 });
 
-test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network partitioned)', () => {
+test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network partitioned)', async () => {
   const dbA = new MonitorDatabase(':memory:');
   const dbB = new MonitorDatabase(':memory:');
 
@@ -230,8 +230,8 @@ test('Scenario 7: Mất kết nối mạng một chiều (Asymmetric network par
   const evalA = new MonitorEvaluator({ db: dbA, config: { disconnectThresholdSec: 180 } });
   const evalB = new MonitorEvaluator({ db: dbB, config: { disconnectThresholdSec: 180 } });
 
-  assert.strictEqual(evalA.evaluatePeerHeartbeat('nhanhoa').state, NodeState.ONLINE);
-  assert.strictEqual(evalB.evaluatePeerHeartbeat('vinahost').state, NodeState.UNKNOWN);
+  assert.strictEqual((await evalA.evaluatePeerHeartbeat('nhanhoa')).state, NodeState.ONLINE);
+  assert.strictEqual((await evalB.evaluatePeerHeartbeat('vinahost')).state, NodeState.UNKNOWN);
 
   dbA.close();
   dbB.close();
@@ -362,63 +362,38 @@ test('Scenario 10: CPU/RAM/Disk vượt ngưỡng (Sustained check triggers, dis
   db.close();
 });
 
-test('Scenario 11: Ngày hết hạn vượt từng ngưỡng (Mỗi mốc báo đúng 1 lần, không lặp hàng ngày) (Finding 7)', async () => {
+test('Scenario 11: Chỉ nhắc hạn thanh toán D-1 một lần (Finding 7)', async () => {
   const db = new MonitorDatabase(':memory:');
   const notifier = new MockDiscordNotifier();
   const expiryDate = '2026-12-31';
+  const config = { serverId: 'vinahost', serverName: 'VinaHost', expiryDate };
 
-  const testWithDays = async (daysRemaining, expectedMilestone) => {
-    const config = {
-      serverId: 'vinahost',
-      serverName: 'VinaHost',
-      expiryDate
-    };
-    // Mock evaluateExpiry to simulate passage of days
+  const testWithDays = async (daysRemaining, thresholdHit) => {
     const evaluator = {
-      evaluateExpiry: () => ({
-        daysRemaining,
-        thresholdHit: expectedMilestone,
-        isOverdue: daysRemaining <= 0
-      })
+      evaluateExpiry: () => ({ daysRemaining, thresholdHit, isOverdue: daysRemaining < 0 })
     };
     const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
     await alertEngine.checkExpiry();
   };
 
-  // Day 28 (milestone 30d): should alert
-  await testWithDays(28, 30);
+  // Old multi-day alert milestones are intentionally ignored.
+  for (const [days, milestone] of [[28,30],[14,15],[6,7],[2,3]]) {
+    await testWithDays(days, milestone);
+    assert.strictEqual(notifier.alerts.length, 0);
+  }
+
+  await testWithDays(1, 1); // only reminder, exactly D-1
   assert.strictEqual(notifier.alerts.length, 1);
-  assert.ok(notifier.alerts[0].description.includes('30 ngày'));
-
-  // Day 27 (still milestone 30d): should NOT alert again!
-  await testWithDays(27, 30);
-  assert.strictEqual(notifier.alerts.length, 1); // no duplicate
-
-  // Day 14 (crosses to milestone 15d): should alert
-  await testWithDays(14, 15);
-  assert.strictEqual(notifier.alerts.length, 2);
-
-  // Day 6 (crosses to milestone 7d): should alert
-  await testWithDays(6, 7);
-  assert.strictEqual(notifier.alerts.length, 3);
-
-  // Day 2 (crosses to milestone 3d): should alert
-  await testWithDays(2, 3);
-  assert.strictEqual(notifier.alerts.length, 4);
-
-  // Day 1 (crosses to milestone 1d): should alert
-  await testWithDays(1, 1);
-  assert.strictEqual(notifier.alerts.length, 5);
-
-  // Day 0 (overdue): should alert overdue
-  await testWithDays(0, 0);
-  assert.strictEqual(notifier.alerts.length, 6);
-  assert.ok(notifier.alerts[5].title.includes('QUÁ HẠN'));
-
+  assert.ok(notifier.alerts[0].title.includes('TRƯỚC 1 NGÀY'));
+  await testWithDays(1, 1); // repeated 30-second cycles: no duplicate
+  assert.strictEqual(notifier.alerts.length, 1);
+  await testWithDays(0, 0); // payment day: no additional alert
+  await testWithDays(-1, 0); // overdue: no additional alert
+  assert.strictEqual(notifier.alerts.length, 1);
   db.close();
 });
 
-test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed payload rejected safely)', () => {
+test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed payload rejected safely)', async () => {
   const db = new MonitorDatabase(':memory:');
   const receiver = new HeartbeatReceiver({
     serverId: 'vinahost',
@@ -426,8 +401,8 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     db
   });
 
-  assert.strictEqual(receiver.processHeartbeat(null, 'sig').valid, false);
-  assert.strictEqual(receiver.processHeartbeat({ sequence: 1 }, 'sig').valid, false);
+  assert.strictEqual((await receiver.processHeartbeat(null, 'sig')).valid, false);
+  assert.strictEqual((await receiver.processHeartbeat({ sequence: 1 }, 'sig')).valid, false);
 
   const wrongReceiverPayload = {
     senderId: 'nhanhoa',
@@ -436,12 +411,12 @@ test('Scenario 12: Dữ liệu không hợp lệ hoặc thiếu (Malformed paylo
     timestamp: new Date().toISOString(),
     nonce: '123'
   };
-  assert.strictEqual(receiver.processHeartbeat(wrongReceiverPayload, 'sig').code, 403);
+  assert.strictEqual((await receiver.processHeartbeat(wrongReceiverPayload, 'sig')).code, 403);
 
   db.close();
 });
 
-test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', () => {
+test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', async () => {
   // Case A: Missing credentials fail closed
   const closedGuard = new AuthGuard({ user: 'admin', pass: '', apiToken: '' });
   assert.strictEqual(closedGuard.isAuthorized({ headers: {} }), false);
@@ -461,7 +436,7 @@ test('Scenario 13: API không được xác thực & Fail-closed (Finding 1)', (
   assert.strictEqual(guard.isAuthorized({ headers: { authorization: `Bearer ${goodBearer}` } }), true);
 });
 
-test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 signature)', () => {
+test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 signature)', async () => {
   const db = new MonitorDatabase(':memory:');
   const config = { serverId: 'vinahost', serverName: 'VinaHost', disconnectThresholdSec: 180 };
   const evaluator = new MonitorEvaluator({ db, config });
@@ -470,14 +445,14 @@ test('Scenario 14: Discord interaction có chữ ký sai (401 on bad Ed25519 sig
   const dummyPubKey = '00'.repeat(32);
   const handler = new DiscordInteractionsHandler({ publicKey: dummyPubKey, commands });
 
-  const res = handler.handle('{"type":1}', 'bad-sig', '1690000000');
+  const res = await handler.handle('{"type":1}', 'bad-sig', '1690000000');
   assert.strictEqual(res.status, 401);
   assert.strictEqual(res.body, 'Invalid request signature');
 
   db.close();
 });
 
-test('Scenario 15: Lịch sử dữ liệu quá 30 ngày (Automatically pruned by retention)', () => {
+test('Scenario 15: Lịch sử dữ liệu quá 30 ngày (Automatically pruned by retention)', async () => {
   const db = new MonitorDatabase(':memory:');
   db.upsertServer({ serverId: 'vinahost', name: 'VinaHost', host: 'localhost', port: 5050, isLocal: true });
 
@@ -576,7 +551,7 @@ test('Finding 4 Special: Silent boot-time failure alert when peer never connects
   db.close();
 });
 
-test('Finding 6 Special: Atomic Online SQLite Backup (VACUUM INTO) creates valid consistent snapshot', () => {
+test('Finding 6 Special: Atomic Online SQLite Backup (VACUUM INTO) creates valid consistent snapshot', async () => {
   const srcDbFile = join(tmpdir(), `test-src-db-${Date.now()}.db`);
   const destDbFile = join(tmpdir(), `test-dest-db-${Date.now()}.db`);
   if (existsSync(srcDbFile)) rmSync(srcDbFile);
