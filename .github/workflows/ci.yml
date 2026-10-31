@@ -1,0 +1,33 @@
+name: VPS Monitor CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+        node-version: [ 22.x, 24.x ]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Syntax and Lint Check
+        run: |
+          node --check src/server.js src/db/*.js src/common/*.js src/agent/*.js src/monitor/*.js src/discord/*.js src/web/*.js
+
+      - name: Run Comprehensive Test Suite (Unit & Integration)
+        run: |
+          npm test
