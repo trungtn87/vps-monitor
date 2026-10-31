@@ -144,17 +144,20 @@ fi
 echo "===> [Step 5] Executing scripts/update.sh directly..."
 # Create a local bare origin for isolated git pull testing
 MOCK_ORIGIN="$TEST_ROOT/mock_origin.git"
+git -C "$TEST_INSTALL_DIR" checkout -B main 2>/dev/null || true
 git clone --bare "$TEST_INSTALL_DIR" "$MOCK_ORIGIN" 2>/dev/null
 git -C "$TEST_INSTALL_DIR" remote set-url origin "$MOCK_ORIGIN"
+git -C "$TEST_INSTALL_DIR" branch --set-upstream-to=origin/main main 2>/dev/null || true
 
 # Push a test modification to mock origin
 TEMP_DEV="$TEST_ROOT/temp_dev"
 git clone "$MOCK_ORIGIN" "$TEMP_DEV" 2>/dev/null
+git -C "$TEMP_DEV" checkout -B main 2>/dev/null || true
 git -C "$TEMP_DEV" config user.name "E2E Tester"
 git -C "$TEMP_DEV" config user.email "test@example.com"
 echo "// Verified update at $(date)" >> "$TEMP_DEV/src/server.js"
 git -C "$TEMP_DEV" commit -am "test: simulated upstream code update"
-git -C "$TEMP_DEV" push origin HEAD 2>/dev/null
+git -C "$TEMP_DEV" push origin main 2>/dev/null
 
 # Execute the actual update.sh script
 bash "$TEST_INSTALL_DIR/scripts/update.sh"

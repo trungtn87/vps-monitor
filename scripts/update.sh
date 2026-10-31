@@ -56,10 +56,15 @@ if [[ ! -d "$INSTALL_DIR/.git" ]]; then
 fi
 
 git fetch origin
-git pull --ff-only || {
-  echo "Git pull failed or has merge conflicts! Aborting update."
-  exit 1
-}
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+if [[ "$CURRENT_BRANCH" != "HEAD" ]]; then
+  git pull --ff-only origin "$CURRENT_BRANCH" || {
+    echo "Git pull failed or has merge conflicts! Aborting update."
+    exit 1
+  }
+else
+  git pull --ff-only || git checkout -B main origin/HEAD 2>/dev/null || true
+fi
 
 if [[ $EUID -eq 0 ]] && id -u vpsmon &>/dev/null; then
   chown -R vpsmon:vpsmon "$INSTALL_DIR"
