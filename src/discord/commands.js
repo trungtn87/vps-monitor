@@ -13,7 +13,7 @@ export class DiscordCommands {
     this.config = config;
   }
 
-  _formatServerDetails(serverId) {
+  async _formatServerDetails(serverId) {
     const isLocal = serverId === this.config.serverId;
     const name = isLocal ? this.config.serverName : this.config.peerServerName;
     const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
@@ -22,7 +22,7 @@ export class DiscordCommands {
     let state = NodeState.ONLINE;
     let hbInfo = 'Local Node';
     if (!isLocal) {
-      const evalRes = this.evaluator.evaluatePeerHeartbeat(serverId);
+      const evalRes = await this.evaluator.evaluatePeerHeartbeat(serverId);
       state = evalRes.state;
       hbInfo = evalRes.lastReceivedAt ? `${evalRes.elapsedSec}s trước` : 'Chưa nhận';
     }
@@ -30,14 +30,14 @@ export class DiscordCommands {
     const stateEmoji = state === NodeState.ONLINE ? '🟢' : (state === NodeState.DISCONNECTED ? '🔴' : '⚪');
 
     // Metrics
-    const metrics = this.db.getLatestMetrics(serverId);
+    const metrics = await this.db.getLatestMetrics(serverId);
     const cpuStr = metrics ? `${metrics.cpu_pct}%` : 'N/A';
     const ramStr = metrics ? `${metrics.ram_pct}% (${metrics.ram_used_mb}/${metrics.ram_total_mb}MB)` : 'N/A';
     const diskStr = metrics ? `${metrics.disk_pct}% (${metrics.disk_used_gb}/${metrics.disk_total_gb}GB)` : 'N/A';
     const uptimeStr = metrics ? `${Math.floor(metrics.uptime_sec / 86400)}d ${Math.floor((metrics.uptime_sec % 86400) / 3600)}h` : 'N/A';
 
     // Service
-    const services = this.db.getServicesByServer(serverId);
+    const services = await this.db.getServicesByServer(serverId);
     let appStatusStr = 'Chưa cấu hình';
     if (services.length > 0) {
       const s = services[0];
@@ -67,9 +67,9 @@ export class DiscordCommands {
   /**
    * Handle /status
    */
-  handleStatus() {
-    const vh = this._formatServerDetails('vinahost');
-    const nh = this._formatServerDetails('nhanhoa');
+  async handleStatus() {
+    const vh = await this._formatServerDetails('vinahost');
+    const nh = await this._formatServerDetails('nhanhoa');
 
     return {
       type: 4, // CHANNEL_MESSAGE_WITH_SOURCE
@@ -100,8 +100,8 @@ export class DiscordCommands {
   /**
    * Handle /vinahost
    */
-  handleVinaHost() {
-    const vh = this._formatServerDetails('vinahost');
+  async handleVinaHost() {
+    const vh = await this._formatServerDetails('vinahost');
     return {
       type: 4,
       data: {
@@ -129,8 +129,8 @@ export class DiscordCommands {
   /**
    * Handle /nhanhoa
    */
-  handleNhanHoa() {
-    const nh = this._formatServerDetails('nhanhoa');
+  async handleNhanHoa() {
+    const nh = await this._formatServerDetails('nhanhoa');
     return {
       type: 4,
       data: {
@@ -200,14 +200,14 @@ export class DiscordCommands {
    * @param {string} commandName 
    * @returns {object}
    */
-  dispatch(commandName) {
+  async dispatch(commandName) {
     switch (commandName.toLowerCase()) {
       case 'status':
-        return this.handleStatus();
+        return await this.handleStatus();
       case 'vinahost':
-        return this.handleVinaHost();
+        return await this.handleVinaHost();
       case 'nhanhoa':
-        return this.handleNhanHoa();
+        return await this.handleNhanHoa();
       case 'expiry':
         return this.handleExpiry();
       default:
