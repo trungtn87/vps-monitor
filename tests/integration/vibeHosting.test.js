@@ -135,3 +135,19 @@ test('Legacy VinaHost SQLite remains independent and survives reopening its own 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Nhân Hòa Monitor checks AutoTrade engine (not only its web dashboard)', () => {
+  const config = loadConfig({
+    ...secureEnv, TRUSTED_PLATFORM_PROXY: 'true',
+    PUBLIC_DASHBOARD: 'true', DASHBOARD_PASS: ''
+  });
+  assert.equal(config.appHealthUrl, 'https://vibetpmzwpxt5.vibe3.vnws.com/engine/health');
+  assert.equal(config.appServiceId, 'autotrade');
+  assert.equal(config.appServiceName, 'AutoTrade Bot');
+  assert.equal(loadConfig({ ...secureEnv, TRUSTED_PLATFORM_PROXY: 'true',
+    PUBLIC_DASHBOARD: 'true', APP_HEALTH_DISABLED: 'true' }).appHealthUrl, '');
+  assert.equal(loadConfig({ ...secureEnv, TRUSTED_PLATFORM_PROXY: 'true',
+    PUBLIC_DASHBOARD: 'true',
+    APP_HEALTH_URL: 'https://autotrade.example.org/engine/health' }).appHealthUrl,
+    'https://autotrade.example.org/engine/health');
+});
