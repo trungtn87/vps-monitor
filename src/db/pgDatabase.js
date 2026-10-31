@@ -144,6 +144,39 @@ export class PgMonitorDatabase {
       cpu_pct:r.cpu_pct,ram_pct:r.ram_pct,created_at:r.snapshot_at
     }));
   }
+  // Separate from the provider's account-level quota data. Rows only exist
+  // if BOTH the Monitor and AutoTrade application containers were sampled.
+  async insertVibeContainerSum(serverId, sample) {
+    return this.q(`INSERT INTO vps_monitor.vibe_container_sums
+      (server_id,cpu_used_vcpu,ram_used_mb,apps_json)
+      VALUES ($1,$2,$3,$4)`,[
+      serverId,sample.cpuUsedVcpu,sample.ramUsedMb,JSON.stringify(sample.apps)
+    ]);
+  }
+  async getLatestVibeContainerSum(serverId) {
+    const r=first(await this.q(`SELECT * FROM vps_monitor.vibe_container_sums
+      WHERE server_id=$1 ORDER BY id DESC LIMIT 1`,[serverId]));
+    if(!r)return null;
+    const ageSec=Math.max(0,Math.floor((Date.now()-Date.parse(r.collected_at+'Z'))/1000));
+    return {
+      source:'CONTAINER_SUM',scope:'VIBE_APPLICATIONS_ONLY',
+      sampledAt:r.collected_at,ageSec,isStale:ageSec>180,
+      cpuUsedVcpu:r.cpu_used_vcpu,ramUsedMb:r.ram_used_mb,
+      apps:r.apps_json
+    };
+  }
+  async getVibeContainerSumHistory(serverId, limit=60, cpuQuotaVcpu=1, ramQuotaMb=2048) {
+    const rows=all(await this.q(`SELECT cpu_used_vcpu,ram_used_mb,collected_at
+      FROM vps_monitor.vibe_container_sums
+      WHERE server_id=$1 AND cpu_used_vcpu IS NOT NULL ORDER BY id DESC LIMIT $2`,[
+      serverId,limit
+    ]));
+    return rows.reverse().map(r=>({
+      cpu_pct:Math.min(100,100*r.cpu_used_vcpu/cpuQuotaVcpu),
+      ram_pct:Math.min(100,100*r.ram_used_mb/ramQuotaMb),
+      created_at:r.collected_at
+    }));
+  }
   async recordHeartbeat(h) {
     return this.q(`INSERT INTO vps_monitor.heartbeat_log
       (sender_id,receiver_id,sequence,sender_timestamp,status,latency_ms)
@@ -258,7 +291,8 @@ export class PgMonitorDatabase {
       this.q("DELETE FROM vps_monitor.heartbeat_log WHERE received_at<now()-($1||' days')::interval",[days]),
       this.q("DELETE FROM vps_monitor.event_history WHERE created_at<now()-($1||' days')::interval",[days]),
       this.q("DELETE FROM vps_monitor.alert_outbox WHERE status='DELIVERED' AND created_at<now()-($1||' days')::interval",[days]),
-      this.q("DELETE FROM vps_monitor.hosting_quota_metrics WHERE collected_at<now()-($1||' days')::interval",[days])
+      this.q("DELETE FROM vps_monitor.hosting_quota_metrics WHERE collected_at<now()-($1||' days')::interval",[days]),
+      this.q("DELETE FROM vps_monitor.vibe_container_sums WHERE collected_at<now()-($1||' days')::interval",[days])
     ]);
     return {deletedMetrics:r[0].rowCount,deletedHeartbeats:r[1].rowCount,
       deletedEvents:r[2].rowCount,deletedOutbox:r[3].rowCount};
