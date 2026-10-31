@@ -16,16 +16,20 @@ export class AlertEngine {
     this.config = config;
     this._lastEvaluatedMetricId = {};
 
+  }
+
+  // Restore tracker after the optional PostgreSQL backend has connected.
+  async init() {
     // Blocker 5: Restore last evaluated metric ID from SQLite alert_state to survive restarts
     try {
-      const evalState = this.db.getAlertState(`${this.config.serverId}:resource_eval`);
+      const evalState = await this.db.getAlertState(`${this.config.serverId}:resource_eval`);
       if (evalState && evalState.details_json) {
         const parsed = JSON.parse(evalState.details_json);
         if (parsed.last_metric_id) {
           this._lastEvaluatedMetricId[this.config.serverId] = parsed.last_metric_id;
         }
       } else {
-        const cpuState = this.db.getAlertState(`${this.config.serverId}:cpu`);
+        const cpuState = await this.db.getAlertState(`${this.config.serverId}:cpu`);
         if (cpuState && cpuState.details_json) {
           const parsed = JSON.parse(cpuState.details_json);
           if (parsed.last_metric_id) {
@@ -45,7 +49,7 @@ export class AlertEngine {
    */
   async dispatchAlert(alertKey, embed) {
     try {
-      this.db.queueAlert({ alertKey, payload: embed });
+      await this.db.queueAlert({ alertKey, payload: embed });
     } catch (err) {
       logger.error(`Error queueing alert ${alertKey} to outbox:`, err);
     }
@@ -59,7 +63,7 @@ export class AlertEngine {
   async processOutbox() {
     let pendingAlerts;
     try {
-      pendingAlerts = this.db.getPendingAlerts(10);
+      pendingAlerts = await this.db.getPendingAlerts(10);
     } catch (err) {
       logger.error('Error fetching pending alerts from outbox:', err);
       return;
@@ -70,26 +74,26 @@ export class AlertEngine {
       try {
         payload = JSON.parse(alert.payload_json);
       } catch {
-        this.db.markAlertDelivered(alert.id); // discard corrupt json
+        await this.db.markAlertDelivered(alert.id); // discard corrupt json
         continue;
       }
 
       try {
         const delivered = await this.notifier.sendAlert(payload);
         if (delivered) {
-          this.db.markAlertDelivered(alert.id);
+          await this.db.markAlertDelivered(alert.id);
           logger.debug(`Alert #${alert.id} (${alert.alert_key}) delivered successfully.`);
         } else {
           // Discord returned false / rate limited: backoff 10s -> 300s
           const attempts = alert.attempts + 1;
           const nextRetrySec = Math.min(300, Math.max(10, Math.pow(2, attempts) * 5));
-          this.db.markAlertRetry(alert.id, attempts, nextRetrySec, 'Delivery returned false or rate limited');
+          await this.db.markAlertRetry(alert.id, attempts, nextRetrySec, 'Delivery returned false or rate limited');
           logger.warn(`Alert #${alert.id} delivery failed; scheduled retry in ${nextRetrySec}s (attempt ${attempts})`);
         }
       } catch (err) {
         const attempts = alert.attempts + 1;
         const nextRetrySec = Math.min(300, Math.max(10, Math.pow(2, attempts) * 5));
-        this.db.markAlertRetry(alert.id, attempts, nextRetrySec, err.message);
+        await this.db.markAlertRetry(alert.id, attempts, nextRetrySec, err.message);
         logger.error(`Exception delivering alert #${alert.id}:`, err);
       }
     }
@@ -113,10 +117,10 @@ export class AlertEngine {
    */
   async checkPeerHeartbeat() {
     const peerId = this.config.peerServerId;
-    const { state, elapsedSec, lastReceivedAt, isStartupFailure } = this.evaluator.evaluatePeerHeartbeat(peerId);
+    const { state, elapsedSec, lastReceivedAt, isStartupFailure } = await this.evaluator.evaluatePeerHeartbeat(peerId);
 
     const alertKey = `${peerId}:heartbeat`;
-    const recorded = this.db.getAlertState(alertKey);
+    const recorded = await this.db.getAlertState(alertKey);
     const prevState = recorded ? recorded.current_state : NodeState.UNKNOWN;
 
     // Transition: became DISCONNECTED
@@ -139,7 +143,7 @@ export class AlertEngine {
       };
 
       // Atomic transition + outbox enqueue (Blocker 2)
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: NodeState.DISCONNECTED,
         consecutiveCount: 1,
@@ -171,7 +175,7 @@ export class AlertEngine {
       };
 
       // Atomic transition + outbox enqueue (Blocker 2)
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: NodeState.ONLINE,
         consecutiveCount: 1,
@@ -188,7 +192,7 @@ export class AlertEngine {
     }
     // If ONLINE and was already ONLINE (or initial UNKNOWN transition to ONLINE)
     else if (state === NodeState.ONLINE && prevState !== NodeState.ONLINE && prevState !== NodeState.DISCONNECTED) {
-      this.db.setAlertState(alertKey, NodeState.ONLINE, 1, { lastReceivedAt });
+      await this.db.setAlertState(alertKey, NodeState.ONLINE, 1, { lastReceivedAt });
     }
   }
 
@@ -197,8 +201,8 @@ export class AlertEngine {
    */
   async checkLocalAgentHealth() {
     const alertKey = `${this.config.serverId}:agent_health`;
-    const latestMetrics = this.db.getLatestMetrics(this.config.serverId);
-    const recorded = this.db.getAlertState(alertKey);
+    const latestMetrics = await this.db.getLatestMetrics(this.config.serverId);
+    const recorded = await this.db.getAlertState(alertKey);
     const prevState = recorded ? recorded.current_state : 'HEALTHY';
 
     let isStale = false;
@@ -227,7 +231,7 @@ export class AlertEngine {
         ]
       };
 
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: 'STALE',
         consecutiveCount: 1,
@@ -250,7 +254,7 @@ export class AlertEngine {
         fields: [{ name: 'VPS', value: this.config.serverName, inline: true }]
       };
 
-      this.db.recordAlertTransition({
+      await this.db.recordAlertTransition({
         alertKey,
         currentState: 'HEALTHY',
         consecutiveCount: 1,
@@ -271,12 +275,12 @@ export class AlertEngine {
    * Check local app service health (11Ship or AutoTrade)
    */
   async checkLocalAppHealth() {
-    const services = this.db.getServicesByServer(this.config.serverId);
+    const services = await this.db.getServicesByServer(this.config.serverId);
     for (const svc of services) {
       if (svc.status === 'DISABLED') continue;
 
       const alertKey = `${svc.service_id}:health`;
-      const recorded = this.db.getAlertState(alertKey);
+      const recorded = await this.db.getAlertState(alertKey);
       const prevState = recorded ? recorded.current_state : 'HEALTHY';
 
       if ((svc.status === 'UNHEALTHY' || svc.status === 'UNREACHABLE') && prevState !== svc.status) {
@@ -292,7 +296,7 @@ export class AlertEngine {
           ]
         };
 
-        this.db.recordAlertTransition({
+        await this.db.recordAlertTransition({
           alertKey,
           currentState: svc.status,
           consecutiveCount: 1,
@@ -318,7 +322,7 @@ export class AlertEngine {
           ]
         };
 
-        this.db.recordAlertTransition({
+        await this.db.recordAlertTransition({
           alertKey,
           currentState: 'HEALTHY',
           consecutiveCount: 1,
@@ -341,7 +345,7 @@ export class AlertEngine {
    */
   async checkResources() {
     const serverId = this.config.serverId;
-    const { cpuAlert, ramAlert, diskAlert, metrics } = this.evaluator.evaluateResources(serverId);
+    const { cpuAlert, ramAlert, diskAlert, metrics } = await this.evaluator.evaluateResources(serverId);
     if (!metrics) return;
 
     // Blocker 5 & Finding 8: Only process new distinct metric snapshots
@@ -351,7 +355,7 @@ export class AlertEngine {
     if (metrics.id) {
       this._lastEvaluatedMetricId[serverId] = metrics.id;
       // Persist to alert_state immediately so restarts don't re-evaluate
-      this.db.setAlertState(`${serverId}:resource_eval`, 'TRACKING', 0, { last_metric_id: metrics.id });
+      await this.db.setAlertState(`${serverId}:resource_eval`, 'TRACKING', 0, { last_metric_id: metrics.id });
     }
 
     const resourceChecks = [
@@ -361,7 +365,7 @@ export class AlertEngine {
     ];
 
     for (const r of resourceChecks) {
-      const recorded = this.db.getAlertState(r.key);
+      const recorded = await this.db.getAlertState(r.key);
       const prevCount = recorded ? recorded.consecutive_count : 0;
       const prevState = recorded ? recorded.current_state : 'NORMAL';
 
@@ -381,7 +385,7 @@ export class AlertEngine {
           };
 
           // Blocker 2 & 5: Atomic transition + persist last_metric_id
-          this.db.recordAlertTransition({
+          await this.db.recordAlertTransition({
             alertKey: r.key,
             currentState: 'ALERTING',
             consecutiveCount: newCount,
@@ -397,7 +401,7 @@ export class AlertEngine {
           await this.processOutbox();
         } else {
           // Blocker 5: Preserve consecutive count and metric ID across restarts
-          this.db.updateAlertCount(r.key, newCount, { last_metric_id: metrics.id, value: r.val });
+          await this.db.updateAlertCount(r.key, newCount, { last_metric_id: metrics.id, value: r.val });
         }
       } else {
         if (prevState === 'ALERTING') {
@@ -412,7 +416,7 @@ export class AlertEngine {
             ]
           };
 
-          this.db.recordAlertTransition({
+          await this.db.recordAlertTransition({
             alertKey: r.key,
             currentState: 'NORMAL',
             consecutiveCount: 0,
@@ -427,7 +431,7 @@ export class AlertEngine {
 
           await this.processOutbox();
         } else if (prevCount > 0) {
-          this.db.updateAlertCount(r.key, 0);
+          await this.db.updateAlertCount(r.key, 0);
         }
       }
     }
@@ -446,7 +450,7 @@ export class AlertEngine {
 
     const milestoneTag = isOverdue ? 'overdue' : `${thresholdHit}d`;
     const alertKey = `expiry:${serverId}:${expiryDate}:${milestoneTag}`;
-    const recorded = this.db.getAlertState(alertKey);
+    const recorded = await this.db.getAlertState(alertKey);
 
     if (recorded && recorded.current_state === 'ALERTED') {
       return;
@@ -475,7 +479,7 @@ export class AlertEngine {
     };
 
     // Blocker 2: Atomic transition + outbox queue
-    this.db.recordAlertTransition({
+    await this.db.recordAlertTransition({
       alertKey,
       currentState: 'ALERTED',
       consecutiveCount: 1,
