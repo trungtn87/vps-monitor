@@ -1,3 +1,5 @@
+> **BLOCKED: Supabase PostgreSQL migration pending.** The current runtime in this branch still uses SQLite and is NOT READY for production Vibe deployment. Owner requires a separate Supabase project/database, not a local SQLite volume or AutoTrade's Supabase project. A draft private SQL schema is in `supabase/monitor_schema.sql`; it has NOT been applied to any database. Do not deploy until PostgreSQL adapter + migrations + CI verify read/write/restart.
+
 # Nhân Hòa Vibe Hosting — GitHub/Docker deployment
 
 ## Scope
@@ -27,13 +29,7 @@ interpret these as full VPS values or use them for host-level capacity alerts.
 
 ## Step 2 — Persistent data (important)
 
-The application creates its **own SQLite database** at `DB_PATH=/data/vps-monitor.db` on first start, completely independent of AutoTrade and Supabase. Mount a **dedicated persistent read/write volume** at `/data` for this Monitor application before enabling production operation. Do not mount any AutoTrade path or share its database.
-
-If Vibe Hosting does not support such a volume, the app may boot and display
-live information but its SQLite alerts/history will be lost on rebuild.
-**Do not treat the deployment as production-ready or use it as an independent
-Discord alerting node** until persistent data is verified across redeploys.
-No changes to AutoTrade's storage or database are allowed.
+**Superseded:** Supabase PostgreSQL is required. The monitor must have a dedicated Supabase project and a private `vps_monitor` schema. The old SQLite-only design and persistent volume requirement must be removed after the PostgreSQL adapter is implemented. No changes to AutoTrade's data/storage/database are permitted.
 
 ## Step 3 — Environment variables
 
