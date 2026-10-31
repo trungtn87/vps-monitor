@@ -18,7 +18,7 @@ interpret these as full VPS values or use them for host-level capacity alerts.
 - Dockerfile filename (only when there is a separate field): `Dockerfile`.
 - **Do not enter `Dockerfile` as Build Path.** Otherwise Dokploy tries to `cd .../code/Dockerfile` and fails because it is a file, not a directory.
 - Container internal port: `3000`.
-- Start command: built into image (`node src/server.js`), no additional build script.
+- Start command: built into image (`node src/vibe/bootstrap.js`), no additional build script.
 - Node version: 24 via the image.
 - Public inbound HTTPS: provided by Vibe Hosting's reverse proxy/domain.
 - **Do not publish HTTP port 3000 directly to the Internet**; only expose it
@@ -39,6 +39,8 @@ Required for production:
 - `VIBE_HOSTING=true`, `TRUSTED_PLATFORM_PROXY=true`
 - `SERVER_ID=nhanhoa`, `HOST=0.0.0.0`, `PORT=3000`, `REQUIRE_TLS=false`
 - `DB_BACKEND=supabase_postgres` + `DATABASE_URL` dedicated to project `gmpgtwtxhjwjeincvkxn`
+- Shared Session pooler (IPv4) host `aws-0-ap-southeast-1.pooler.supabase.com:5432` with username `vps_monitor_app.gmpgtwtxhjwjeincvkxn`, as read from this project's Supabase Connect screen.
+- Supabase SSL `require`: TLS encryption is mandatory, but the application does not verify the pooler's CA/hostname until a CA bundle is explicitly configured. This matches Supabase's documented `sslmode=require` but is **not** `verify-full`. Do not set `sslmode=disable`. Store only in the Vibe Environment.
 - `HEARTBEAT_SECRET` = one unique random secret (>=32 characters), **identical
   on VinaHost**. Do not paste it into tickets or chats.
 - `PUBLIC_DASHBOARD=true` permits anonymous **GET-only** access to Dashboard files,
