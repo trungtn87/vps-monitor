@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -164,7 +164,7 @@ export class MonitorDatabase {
     const stmt = this.db.prepare(`
       SELECT * FROM heartbeat_log 
       WHERE sender_id = ? AND status = 'VALID'
-      ORDER BY received_at DESC 
+      ORDER BY id DESC 
       LIMIT 1
     `);
     return stmt.get(senderId) || null;
@@ -188,7 +188,7 @@ export class MonitorDatabase {
   getRecentEvents(limit = 50) {
     const stmt = this.db.prepare(`
       SELECT * FROM event_history 
-      ORDER BY created_at DESC 
+      ORDER BY id DESC 
       LIMIT ?
     `);
     return stmt.all(limit);
@@ -230,6 +230,60 @@ export class MonitorDatabase {
     return stmt.run(alertKey, count);
   }
 
+  // --- Alert Outbox (Persistent delivery queue) ---
+  queueAlert({ alertKey, payload }) {
+    const stmt = this.db.prepare(`
+      INSERT INTO alert_outbox (alert_key, payload_json, status, attempts, next_retry_at, created_at)
+      VALUES (?, ?, 'PENDING', 0, datetime('now'), datetime('now'))
+    `);
+    const res = stmt.run(alertKey, JSON.stringify(payload));
+    return Number(res.lastInsertRowid);
+  }
+
+  getPendingAlerts(limit = 10) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM alert_outbox 
+      WHERE status = 'PENDING' AND next_retry_at <= datetime('now')
+      ORDER BY id ASC 
+      LIMIT ?
+    `);
+    return stmt.all(limit);
+  }
+
+  markAlertDelivered(id) {
+    const stmt = this.db.prepare(`
+      UPDATE alert_outbox 
+      SET status = 'DELIVERED', delivered_at = datetime('now')
+      WHERE id = ?
+    `);
+    return stmt.run(id);
+  }
+
+  markAlertRetry(id, attempts, nextRetrySec, error) {
+    const stmt = this.db.prepare(`
+      UPDATE alert_outbox 
+      SET attempts = ?, next_retry_at = datetime('now', '+' || ? || ' seconds'), last_error = ?
+      WHERE id = ?
+    `);
+    return stmt.run(attempts, nextRetrySec, error || null, id);
+  }
+
+  // --- Safe SQLite Snapshot Backup (VACUUM INTO) ---
+  backup(destPath) {
+    if (this.dbPath === ':memory:') {
+      throw new Error('Cannot run VACUUM INTO on an in-memory database');
+    }
+    mkdirSync(dirname(destPath), { recursive: true });
+    if (existsSync(destPath)) {
+      rmSync(destPath);
+    }
+    // Checkpoint WAL and write a consistent, standalone database file
+    this.db.exec(`PRAGMA wal_checkpoint(TRUNCATE);`);
+    const sanitizedPath = destPath.replace(/'/g, "''");
+    this.db.exec(`VACUUM INTO '${sanitizedPath}';`);
+    return destPath;
+  }
+
   // --- Retention Cleanup (30 days) ---
   cleanOldData(retentionDays = 30) {
     const cutoffDate = `-${retentionDays} days`;
@@ -248,10 +302,16 @@ export class MonitorDatabase {
       WHERE created_at < datetime('now', ?)
     `).run(cutoffDate);
 
+    const delOutbox = this.db.prepare(`
+      DELETE FROM alert_outbox 
+      WHERE status = 'DELIVERED' AND created_at < datetime('now', ?)
+    `).run(cutoffDate);
+
     return {
       deletedMetrics: delMetrics.changes,
       deletedHeartbeats: delHeartbeats.changes,
-      deletedEvents: delEvents.changes
+      deletedEvents: delEvents.changes,
+      deletedOutbox: delOutbox.changes
     };
   }
 

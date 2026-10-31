@@ -90,7 +90,23 @@ CREATE TABLE IF NOT EXISTS alert_state (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 7. Schema Version Migration Tracker
+-- 7. Alert Outbox: persistent delivery queue preventing lost alerts during Discord outages (Finding 3)
+CREATE TABLE IF NOT EXISTS alert_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',   -- PENDING, DELIVERED, FAILED
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  delivered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_outbox_status_retry
+  ON alert_outbox(status, next_retry_at);
+
+-- 8. Schema Version Migration Tracker
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL DEFAULT (datetime('now'))

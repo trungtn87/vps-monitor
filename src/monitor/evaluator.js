@@ -10,31 +10,53 @@ export class MonitorEvaluator {
    * @param {object} options
    * @param {import('../db/database.js').MonitorDatabase} options.db
    * @param {object} options.config
+   * @param {number} [options.serviceStartedAt] - Boot timestamp (epoch ms)
    */
-  constructor({ db, config }) {
+  constructor({ db, config, serviceStartedAt = Date.now() }) {
     this.db = db;
     this.config = config;
+    this.serviceStartedAt = serviceStartedAt;
   }
 
   /**
    * Evaluate peer node connectivity state based on local received heartbeat
+   * Includes startup grace period to avoid silent boot-time failure (Finding 4)
    * @param {string} peerId 
    * @returns {{ state: string, lastReceivedAt: string|null, elapsedSec: number }}
    */
   evaluatePeerHeartbeat(peerId) {
     const lastHb = this.db.getLastHeartbeat(peerId);
-    if (!lastHb || !lastHb.received_at) {
-      return { state: NodeState.UNKNOWN, lastReceivedAt: null, elapsedSec: Infinity };
-    }
-
-    const lastTime = new Date(lastHb.received_at + 'Z').getTime();
     const now = Date.now();
-    const elapsedSec = Math.max(0, Math.floor((now - lastTime) / 1000));
 
     // Check alert state table for current recorded state
     const alertKey = `${peerId}:heartbeat`;
     const currentStateRecord = this.db.getAlertState(alertKey);
     const prevRecordedState = currentStateRecord ? currentStateRecord.current_state : NodeState.UNKNOWN;
+
+    if (!lastHb || !lastHb.received_at) {
+      const elapsedSinceStart = Math.max(0, Math.floor((now - this.serviceStartedAt) / 1000));
+      const startupGraceSec = this.config.startupGraceSec || this.config.disconnectThresholdSec || 180;
+
+      // If startup grace period has expired without any heartbeat, mark as DISCONNECTED
+      if (elapsedSinceStart > startupGraceSec) {
+        return {
+          state: NodeState.DISCONNECTED,
+          lastReceivedAt: null,
+          elapsedSec: elapsedSinceStart,
+          isStartupFailure: true
+        };
+      }
+
+      return {
+        state: NodeState.UNKNOWN,
+        lastReceivedAt: null,
+        elapsedSec: elapsedSinceStart,
+        isStartupFailure: false
+      };
+    }
+
+    const lastTime = new Date(lastHb.received_at + 'Z').getTime();
+    const elapsedSec = Math.max(0, Math.floor((now - lastTime) / 1000));
 
     let state;
     if (elapsedSec > this.config.disconnectThresholdSec) {
@@ -76,28 +98,32 @@ export class MonitorEvaluator {
   /**
    * Evaluate VPS expiration date
    * @param {string} expiryDateStr - YYYY-MM-DD
-   * @returns {{ daysRemaining: number|null, thresholdHit: number|null }}
+   * @returns {{ daysRemaining: number|null, thresholdHit: number|string|null, isOverdue: boolean }}
    */
   evaluateExpiry(expiryDateStr) {
-    if (!expiryDateStr) return { daysRemaining: null, thresholdHit: null };
+    if (!expiryDateStr) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
 
     const expiryTime = new Date(expiryDateStr + 'T23:59:59Z').getTime();
-    if (isNaN(expiryTime)) return { daysRemaining: null, thresholdHit: null };
+    if (isNaN(expiryTime)) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
 
     const now = Date.now();
     const diffMs = expiryTime - now;
     const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    const isOverdue = daysRemaining <= 0;
 
-    const thresholds = [1, 3, 7, 15, 30];
     let thresholdHit = null;
-
-    for (const t of thresholds) {
-      if (daysRemaining <= t) {
-        thresholdHit = t;
-        break;
+    if (isOverdue) {
+      thresholdHit = 0; // Overdue milestone
+    } else {
+      const thresholds = [1, 3, 7, 15, 30];
+      for (const t of thresholds) {
+        if (daysRemaining <= t) {
+          thresholdHit = t;
+          break;
+        }
       }
     }
 
-    return { daysRemaining, thresholdHit };
+    return { daysRemaining, thresholdHit, isOverdue };
   }
 }
