@@ -47,7 +47,7 @@ test('Vibe client restricts destinations and does not send browser cookies', asy
   assert.throws(()=>new VibeQuotaClient({url:'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81&redirect=http://bad.test',expectedUserId:'81'}),/exact Vibe stats/);
   let opts=null;
   const client = new VibeQuotaClient({
-    url:'http://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81/check-quota?userId=81',
+    url:'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81',
     token:'example-read-token', expectedUserId:'81',
     fetchFn:async (_,p)=>{opts=p;return {ok:true,text:async()=>JSON.stringify(fixture())};}
   });
