@@ -1,0 +1,32 @@
+[Unit]
+Description=VPS Monitor V1 Service
+After=network.target
+
+[Service]
+Type=simple
+User=vpsmon
+Group=vpsmon
+WorkingDirectory=/opt/vps-monitor
+EnvironmentFile=/opt/vps-monitor/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5s
+
+# Bounded resource consumption safeguards
+MemoryMax=256M
+MemoryHigh=192M
+CPUQuota=20%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-monitor
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+/var/log/vps-monitor/*.log {
+    weekly
+    rotate 4
+    size 50M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
