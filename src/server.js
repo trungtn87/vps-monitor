@@ -33,7 +33,7 @@ export async function createServer(customEnv = null) {
   // Vibe always uses its own dedicated Supabase PostgreSQL project.
   // VinaHost keeps its existing local SQLite implementation.
   const db = config.dbBackend === 'supabase_postgres'
-    ? await new PgMonitorDatabase(config.databaseUrl).init()
+    ? await new PgMonitorDatabase(config.databaseUrl, { testMode: config.nodeEnv === 'test' }).init()
     : new MonitorDatabase(config.dbPath);
 
   // 2. Register Local and Peer Servers
