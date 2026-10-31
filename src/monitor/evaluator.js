@@ -96,7 +96,7 @@ export class MonitorEvaluator {
   }
 
   /**
-   * Evaluate VPS expiration date
+   * Evaluate billing date; only a D-1 reminder is actionable
    * @param {string} expiryDateStr - YYYY-MM-DD
    * @returns {{ daysRemaining: number|null, thresholdHit: number|string|null, isOverdue: boolean }}
    */
@@ -124,18 +124,9 @@ export class MonitorEvaluator {
     const daysRemaining = Math.round((expiryUTC - todayUTC) / 86400000);
     const isOverdue = daysRemaining < 0;
 
-    let thresholdHit = null;
-    if (isOverdue || daysRemaining === 0) {
-      thresholdHit = 0;
-    } else {
-      for (const threshold of [1, 3, 7, 15, 30]) {
-        if (daysRemaining <= threshold) {
-          thresholdHit = threshold;
-          break;
-        }
-      }
-    }
-
+    // One single reminder, exactly one Vietnam calendar day before payment.
+    // No reminders on the due date, after the due date, or at earlier milestones.
+    const thresholdHit = daysRemaining === 1 ? 1 : null;
     return { daysRemaining, thresholdHit, isOverdue };
   }
 }
