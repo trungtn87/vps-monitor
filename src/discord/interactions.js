@@ -6,10 +6,14 @@ export class DiscordInteractionsHandler {
    * @param {object} options
    * @param {string} options.publicKey - Discord Application Public Key
    * @param {import('./commands.js').DiscordCommands} options.commands
+   * @param {string[]} [options.allowedUserIds] - Allowed Discord user IDs (Finding 9)
+   * @param {string[]} [options.allowedGuildIds] - Allowed Discord guild/server IDs (Finding 9)
    */
-  constructor({ publicKey, commands }) {
+  constructor({ publicKey, commands, allowedUserIds = [], allowedGuildIds = [] }) {
     this.publicKey = publicKey;
     this.commands = commands;
+    this.allowedUserIds = allowedUserIds;
+    this.allowedGuildIds = allowedGuildIds;
   }
 
   /**
@@ -47,6 +51,36 @@ export class DiscordInteractionsHandler {
 
     // 4. Discord APPLICATION_COMMAND (Type 2)
     if (data.type === 2 && data.data && data.data.name) {
+      // Finding 9: Access restriction by Guild ID
+      if (this.allowedGuildIds.length > 0) {
+        const guildId = data.guild_id;
+        if (!guildId || !this.allowedGuildIds.includes(guildId)) {
+          logger.warn(`Discord command /${data.data.name} rejected from unauthorized guild ${guildId}`);
+          return {
+            status: 200,
+            body: {
+              type: 4,
+              data: { content: '⛔ Lệnh chỉ được phép thực hiện trên Discord Server được ủy quyền.' }
+            }
+          };
+        }
+      }
+
+      // Finding 9: Access restriction by User ID
+      if (this.allowedUserIds.length > 0) {
+        const userId = data.member?.user?.id || data.user?.id;
+        if (!userId || !this.allowedUserIds.includes(userId)) {
+          logger.warn(`Discord command /${data.data.name} rejected from unauthorized user ${userId}`);
+          return {
+            status: 200,
+            body: {
+              type: 4,
+              data: { content: '⛔ Bạn không có quyền thực hiện lệnh tra cứu này.' }
+            }
+          };
+        }
+      }
+
       const commandName = data.data.name;
       logger.info(`Discord slash command received: /${commandName}`);
       const response = this.commands.dispatch(commandName);
