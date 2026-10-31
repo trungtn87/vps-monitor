@@ -22,7 +22,7 @@ const first = r => row(r.rows[0]);
 const all = r => r.rows.map(row);
 
 export class PgMonitorDatabase {
-  constructor(url) {
+  constructor(url, { testMode = false } = {}) {
     if (!url) throw new Error('[DB CONFIG ERROR] DATABASE_URL missing for Supabase PostgreSQL');
     const u = new URL(url);
     if (!['postgresql:', 'postgres:'].includes(u.protocol)) {
@@ -31,8 +31,9 @@ export class PgMonitorDatabase {
     this.pool = new Pool({
       connectionString: url, max: 3, idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
-      ssl: { rejectUnauthorized: true }
+      ssl: testMode ? false : { rejectUnauthorized: true }
     });
+    this.testMode = testMode;
     this.pool.on('error', () => { /* pool automatically replaces broken idle connections */ });
   }
   async init() {
@@ -40,7 +41,7 @@ export class PgMonitorDatabase {
     if (!check.rows[0]?.t) throw new Error('[DB SCHEMA ERROR] vps_monitor schema missing. Apply monitor_schema.sql to the dedicated Supabase project.');
     const projectRef = 'gmpgtwtxhjwjeincvkxn';
     // Ref guard prevents accidentally targeting AutoTrade or an unrelated project.
-    if (!this.pool.options.connectionString.includes(projectRef)) {
+    if (!this.testMode && !this.pool.options.connectionString.includes(projectRef)) {
       throw new Error('[DB CONFIG ERROR] This deployment is restricted to the VPS-Monitor Supabase project.');
     }
     return this;
