@@ -166,6 +166,8 @@ export class HttpRouter {
         }
 
         const latestMetrics = await this.db.getLatestMetrics(srv.server_id);
+        const hostingQuota = isLocal && this.config.vibeHosting && this.db.getLatestHostingQuota
+          ? await this.db.getLatestHostingQuota(srv.server_id) : null;
         const services = await this.db.getServicesByServer(srv.server_id);
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
@@ -194,6 +196,7 @@ export class HttpRouter {
           name: srv.name,
           isLocal,
           metricScope: isLocal ? this.config.metricScope : this.config.peerMetricScope,
+          hostingQuota,
           role: srv.role,
           connectionState,
           elapsedSec,
