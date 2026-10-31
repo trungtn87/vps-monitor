@@ -28,7 +28,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: VinaHost deployment script syntax
-        run: bash -n scripts/configure-vinahost.sh scripts/setup-vinahost-https.sh scripts/enable-discord-vinahost.sh
+        run: bash -n scripts/configure-vinahost.sh scripts/setup-vinahost-https.sh scripts/enable-discord-vinahost.sh scripts/set-billing-dates-vinahost.sh
 
       - name: Syntax and Lint Check
         run: |
