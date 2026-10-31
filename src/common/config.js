@@ -12,6 +12,7 @@ export function loadConfig(env = process.env) {
   // Explicit opt-in only; the runtime must never expose its container port directly.
   const vibeHosting = env.VIBE_HOSTING === 'true';
   const trustedPlatformProxy = env.TRUSTED_PLATFORM_PROXY === 'true';
+  const publicDashboard = env.PUBLIC_DASHBOARD === 'true';
   const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
@@ -19,7 +20,10 @@ export function loadConfig(env = process.env) {
     if (!heartbeatSecret || heartbeatSecret === 'dev-secret-change-in-production' || heartbeatSecret.length < 32) {
       throw new Error('[SECURITY FATAL] HEARTBEAT_SECRET must be set and contain at least 32 characters in production.');
     }
-    if (!dashboardPass && !apiToken) {
+    if (publicDashboard && (!vibeHosting || !trustedPlatformProxy)) {
+      throw new Error('[SECURITY FATAL] PUBLIC_DASHBOARD=true is allowed only for Vibe behind the configured HTTPS platform proxy.');
+    }
+    if (!publicDashboard && !dashboardPass && !apiToken) {
       throw new Error('[SECURITY FATAL] DASHBOARD_PASS or API_TOKEN must be configured in production (fail-closed authentication).');
     }
     if (vibeHosting && (!trustedPlatformProxy || requireTls || host !== '0.0.0.0')) {
@@ -45,6 +49,7 @@ export function loadConfig(env = process.env) {
     serverId,
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
     vibeHosting,
+    publicDashboard,
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
