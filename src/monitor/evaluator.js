@@ -100,25 +100,37 @@ export class MonitorEvaluator {
    * @param {string} expiryDateStr - YYYY-MM-DD
    * @returns {{ daysRemaining: number|null, thresholdHit: number|string|null, isOverdue: boolean }}
    */
-  evaluateExpiry(expiryDateStr) {
-    if (!expiryDateStr) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
+  evaluateExpiry(expiryDateStr, nowMs = Date.now()) {
+    if (typeof expiryDateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expiryDateStr)) {
+      return { daysRemaining: null, thresholdHit: null, isOverdue: false };
+    }
+    const [y, m, d] = expiryDateStr.split('-').map(Number);
+    const expiryUTC = Date.UTC(y, m - 1, d);
+    // Reject nonexistent calendar dates instead of normalizing (e.g. Feb 30).
+    if (!Number.isFinite(expiryUTC) ||
+        new Date(expiryUTC).toISOString().slice(0, 10) !== expiryDateStr) {
+      return { daysRemaining: null, thresholdHit: null, isOverdue: false };
+    }
 
-    const expiryTime = new Date(expiryDateStr + 'T23:59:59Z').getTime();
-    if (isNaN(expiryTime)) return { daysRemaining: null, thresholdHit: null, isOverdue: false };
-
-    const now = Date.now();
-    const diffMs = expiryTime - now;
-    const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    const isOverdue = daysRemaining <= 0;
+    // Billing deadlines are calendar dates in Vietnam, not UTC timestamps.
+    // Comparing UTC midnight representations of LOCAL dates avoids DST/rounding
+    // drift near midnight and counts the due date as 0 (not overdue).
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date(nowMs));
+    const v = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const todayUTC = Date.UTC(Number(v.year), Number(v.month) - 1, Number(v.day));
+    const daysRemaining = Math.round((expiryUTC - todayUTC) / 86400000);
+    const isOverdue = daysRemaining < 0;
 
     let thresholdHit = null;
-    if (isOverdue) {
-      thresholdHit = 0; // Overdue milestone
+    if (isOverdue || daysRemaining === 0) {
+      thresholdHit = 0;
     } else {
-      const thresholds = [1, 3, 7, 15, 30];
-      for (const t of thresholds) {
-        if (daysRemaining <= t) {
-          thresholdHit = t;
+      for (const threshold of [1, 3, 7, 15, 30]) {
+        if (daysRemaining <= threshold) {
+          thresholdHit = threshold;
           break;
         }
       }
