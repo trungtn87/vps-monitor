@@ -23,7 +23,7 @@ echo "===> Restoring database from $BACKUP_FILE..."
 echo "Stopping vps-monitor service..."
 systemctl stop vps-monitor.service || true
 
-# Remove existing WAL and SHM files
+# Remove existing WAL and SHM files to ensure clean state
 rm -f "${DB_FILE}" "${DB_FILE}-wal" "${DB_FILE}-shm"
 
 # Restore database file
@@ -31,13 +31,24 @@ cp "$BACKUP_FILE" "$DB_FILE"
 chown -R vpsmon:vpsmon "$INSTALL_DIR/data"
 chmod 600 "$DB_FILE"
 
+# Finding 6: Verify restored database integrity
+if command -v sqlite3 &>/dev/null; then
+  echo "Running database integrity check..."
+  INTEGRITY=$(sqlite3 "$DB_FILE" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+  if [[ "$INTEGRITY" != "ok" ]]; then
+    echo "Error: Restored database integrity check failed! Result: $INTEGRITY"
+    exit 1
+  fi
+  echo "Integrity check passed: ok"
+fi
+
 echo "Restarting vps-monitor service..."
 systemctl start vps-monitor.service
 sleep 2
 
-HEALTH_RES=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || echo "000")
+HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
 if [[ "$HEALTH_RES" == "200" ]]; then
-  echo "✅ Database restore successful! Service is UP."
+  echo "✅ Database restore completed successfully! Service is UP (HTTP 200)."
 else
   echo "❌ Error: Service failed to start after restore (HTTP $HEALTH_RES)!"
   exit 1

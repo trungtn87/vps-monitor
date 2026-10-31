@@ -18,19 +18,34 @@ if [[ ! -f "$DB_FILE" ]]; then
   exit 0
 fi
 
-echo "===> Creating database backup to $TARGET_FILE..."
+echo "===> Creating transaction-consistent database backup to $TARGET_FILE..."
 
-# Check if sqlite3 CLI is available for clean online backup
+# Check if sqlite3 CLI is available for clean online backup (Finding 6)
 if command -v sqlite3 &>/dev/null; then
-  sqlite3 "$DB_FILE" ".backup '$TARGET_FILE'"
+  # Flush WAL and run atomic online backup
+  sqlite3 "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
+  sqlite3 "$DB_FILE" "VACUUM INTO '$TARGET_FILE';"
 else
-  # Fallback to file copy with wal files
+  echo "Notice: sqlite3 CLI not found. Stopping vps-monitor briefly to ensure clean file snapshot..."
+  WAS_RUNNING=0
+  if systemctl is-active --quiet vps-monitor.service 2>/dev/null; then
+    WAS_RUNNING=1
+    systemctl stop vps-monitor.service
+  fi
+
   cp "$DB_FILE" "$TARGET_FILE"
-  if [[ -f "${DB_FILE}-wal" ]]; then
-    cp "${DB_FILE}-wal" "${TARGET_FILE}-wal"
+
+  if [[ "$WAS_RUNNING" -eq 1 ]]; then
+    systemctl start vps-monitor.service
   fi
 fi
 
-echo "✅ Backup successfully created at: $TARGET_FILE"
+# Verify backup file size
+if [[ ! -s "$TARGET_FILE" ]]; then
+  echo "Error: Backup file is empty or failed to create!"
+  exit 1
+fi
+
+echo "✅ Backup successfully created and verified at: $TARGET_FILE"
 # Keep only last 14 backups
-ls -t "$BACKUP_DIR"/monitor_backup_*.db 2>/dev/null | tail -n +15 | xargs -r rm -f
+ls -t "$BACKUP_DIR"/monitor_backup_*.db 2>/dev/null | tail -n +15 | xargs -r rm -f || true

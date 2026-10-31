@@ -21,7 +21,7 @@ echo "===> [1/6] Checking system requirements..."
 if ! command -v node &> /dev/null; then
   echo "Node.js not found. Installing Node.js 22 LTS..."
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
+  apt-get install -y nodejs sqlite3
 fi
 
 NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
@@ -55,15 +55,24 @@ mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/data"
 mkdir -p "$INSTALL_DIR/backups"
 
-# Copy repository files to /opt/vps-monitor
+# Copy all repository files to /opt/vps-monitor including .git and dotfiles (Finding 5)
+shopt -s dotglob
 cp -r ./* "$INSTALL_DIR/"
+shopt -u dotglob
+
+# Verify .git exists so future updates work seamlessly
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  echo "Git repository preserved at $INSTALL_DIR/.git (Update path verified)."
+else
+  echo "Warning: .git directory was not found in source. Automated git update will require git clone."
+fi
 
 # Setup initial .env if not exists
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   echo "Copying config/${ROLE}.env.example to $INSTALL_DIR/.env..."
   cp "$INSTALL_DIR/config/${ROLE}.env.example" "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env"
-  echo "IMPORTANT: Please edit $INSTALL_DIR/.env with your actual IPs, shared secret, and Discord credentials!"
+  echo "IMPORTANT: Please edit $INSTALL_DIR/.env with your actual IPs, TLS certs, and Discord credentials!"
 fi
 
 chown -R vpsmon:vpsmon "$INSTALL_DIR"

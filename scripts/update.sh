@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # VPS Monitor V1 — Safe Update Script
-# Creates a backup snapshot, updates code, restarts service, verifies /healthz
+# Creates a transaction-consistent backup snapshot, updates code, restarts service, verifies /healthz
 # Usage: sudo bash scripts/update.sh
 # ==============================================================================
 set -euo pipefail
@@ -15,12 +15,28 @@ INSTALL_DIR="/opt/vps-monitor"
 BACKUP_DIR="$INSTALL_DIR/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SNAPSHOT_DIR="$BACKUP_DIR/pre_update_$TIMESTAMP"
+DB_FILE="$INSTALL_DIR/data/monitor.db"
 
 echo "===> [1/4] Creating pre-update backup snapshot at $SNAPSHOT_DIR..."
 mkdir -p "$SNAPSHOT_DIR"
-if [[ -f "$INSTALL_DIR/data/monitor.db" ]]; then
-  cp "$INSTALL_DIR/data/monitor.db"* "$SNAPSHOT_DIR/" 2>/dev/null || true
+
+# Transaction-consistent SQLite snapshot (Finding 6)
+if [[ -f "$DB_FILE" ]]; then
+  if command -v sqlite3 &>/dev/null; then
+    echo "Running atomic SQLite online backup (VACUUM INTO)..."
+    sqlite3 "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
+    sqlite3 "$DB_FILE" "VACUUM INTO '$SNAPSHOT_DIR/monitor.db';"
+  else
+    # Fallback: stop service briefly to guarantee zero in-flight writes
+    echo "sqlite3 CLI not present; stopping service briefly for clean snapshot..."
+    systemctl stop vps-monitor.service || true
+    cp "$DB_FILE" "$SNAPSHOT_DIR/monitor.db"
+    if [[ -f "${DB_FILE}-wal" ]]; then
+      cp "${DB_FILE}-wal" "$SNAPSHOT_DIR/monitor.db-wal"
+    fi
+  fi
 fi
+
 cp -r "$INSTALL_DIR/src" "$SNAPSHOT_DIR/"
 cp "$INSTALL_DIR/package.json" "$SNAPSHOT_DIR/"
 if [[ -f "$INSTALL_DIR/.env" ]]; then
@@ -29,6 +45,14 @@ fi
 
 echo "===> [2/4] Updating codebase from Git repository..."
 cd "$INSTALL_DIR"
+
+# Finding 5: Verify .git exists
+if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+  echo "Error: $INSTALL_DIR is not a git repository (.git missing)!"
+  echo "Please check installation or re-clone the repository."
+  exit 1
+fi
+
 git fetch origin
 git pull --ff-only || {
   echo "Git pull failed or has merge conflicts! Aborting update."
@@ -42,7 +66,7 @@ systemctl restart vps-monitor.service
 
 echo "===> [4/4] Verifying health endpoint..."
 sleep 2
-HEALTH_RES=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || echo "000")
+HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
 
 if [[ "$HEALTH_RES" == "200" ]]; then
   echo "------------------------------------------------------------------"

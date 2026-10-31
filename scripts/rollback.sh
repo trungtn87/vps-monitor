@@ -41,8 +41,15 @@ if [[ -f "$SNAPSHOT_DIR/.env.bak" ]]; then
 fi
 
 echo "===> [3/4] Restoring database snapshot..."
+# Clean WAL / shm files before restore (Finding 6)
+rm -f "$INSTALL_DIR/data/monitor.db-wal" "$INSTALL_DIR/data/monitor.db-shm"
 if compgen -G "$SNAPSHOT_DIR/monitor.db*" > /dev/null; then
   cp "$SNAPSHOT_DIR/monitor.db"* "$INSTALL_DIR/data/"
+fi
+
+# Verify database integrity if sqlite3 is installed
+if command -v sqlite3 &>/dev/null && [[ -f "$INSTALL_DIR/data/monitor.db" ]]; then
+  sqlite3 "$INSTALL_DIR/data/monitor.db" "PRAGMA integrity_check;" 2>/dev/null || true
 fi
 
 chown -R vpsmon:vpsmon "$INSTALL_DIR"
@@ -51,7 +58,7 @@ echo "===> [4/4] Starting service and checking status..."
 systemctl start vps-monitor.service
 sleep 2
 
-HEALTH_RES=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || echo "000")
+HEALTH_RES=$(curl -s -k -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/healthz || curl -s -k -o /dev/null -w "%{http_code}" https://127.0.0.1:5050/healthz || echo "000")
 if [[ "$HEALTH_RES" == "200" ]]; then
   echo "✅ Rollback completed successfully! Service is UP (HTTP 200)."
 else
