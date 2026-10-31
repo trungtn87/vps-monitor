@@ -136,6 +136,14 @@ export class PgMonitorDatabase {
       apps:record.apps_json
     };
   }
+  async getHostingQuotaHistory(serverId, limit=60) {
+    const rows = all(await this.q(`SELECT cpu_pct,ram_pct,snapshot_at
+      FROM vps_monitor.hosting_quota_metrics
+      WHERE server_id=$1 ORDER BY snapshot_at DESC LIMIT $2`,[serverId,limit]));
+    return rows.reverse().map(r => ({
+      cpu_pct:r.cpu_pct,ram_pct:r.ram_pct,created_at:r.snapshot_at
+    }));
+  }
   async recordHeartbeat(h) {
     return this.q(`INSERT INTO vps_monitor.heartbeat_log
       (sender_id,receiver_id,sequence,sender_timestamp,status,latency_ms)
