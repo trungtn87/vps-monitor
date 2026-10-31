@@ -13,12 +13,20 @@ export function loadConfig(env = process.env) {
   const vibeHosting = env.VIBE_HOSTING === 'true';
   const trustedPlatformProxy = env.TRUSTED_PLATFORM_PROXY === 'true';
   const publicDashboard = env.PUBLIC_DASHBOARD === 'true';
+  const dbBackend = env.DB_BACKEND || (vibeHosting && nodeEnv === 'production' ? 'supabase_postgres' : 'sqlite');
+  const databaseUrl = env.DATABASE_URL || '';
   const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
   if (nodeEnv === 'production') {
     if (!heartbeatSecret || heartbeatSecret === 'dev-secret-change-in-production' || heartbeatSecret.length < 32) {
       throw new Error('[SECURITY FATAL] HEARTBEAT_SECRET must be set and contain at least 32 characters in production.');
+    }
+    if (vibeHosting && dbBackend !== 'supabase_postgres') {
+      throw new Error('[DB CONFIG ERROR] Production Vibe requires DB_BACKEND=supabase_postgres; SQLite is not supported.');
+    }
+    if (dbBackend === 'supabase_postgres' && !databaseUrl) {
+      throw new Error('[DB CONFIG ERROR] DATABASE_URL required for Supabase PostgreSQL.');
     }
     if (publicDashboard && (!vibeHosting || !trustedPlatformProxy)) {
       throw new Error('[SECURITY FATAL] PUBLIC_DASHBOARD=true is allowed only for Vibe behind the configured HTTPS platform proxy.');
@@ -50,6 +58,8 @@ export function loadConfig(env = process.env) {
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
     vibeHosting,
     publicDashboard,
+    dbBackend,
+    databaseUrl,
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
