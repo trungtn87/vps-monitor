@@ -61,10 +61,13 @@ jobs:
       - name: Bootstrap private Postgres Monitor schema
         run: |
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
-            psql -h 127.0.0.1 -U postgres -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
+            psql -h 127.0.0.1 -U postgres -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE vps_monitor_app;'
           docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
             -v "$PWD/supabase:/sql:ro" postgres:17 \
             psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/monitor_schema.sql
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/hosting_quota.sql
       - name: Setup Node for PostgreSQL integration
         uses: actions/setup-node@v4
         with:
