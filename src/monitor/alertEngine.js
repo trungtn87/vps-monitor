@@ -63,7 +63,9 @@ export class AlertEngine {
   async processOutbox() {
     let pendingAlerts;
     try {
-      pendingAlerts = await this.db.getPendingAlerts(10);
+      pendingAlerts = this.db.claimPendingAlerts
+        ? await this.db.claimPendingAlerts(10)
+        : await this.db.getPendingAlerts(10);
     } catch (err) {
       logger.error('Error fetching pending alerts from outbox:', err);
       return;
