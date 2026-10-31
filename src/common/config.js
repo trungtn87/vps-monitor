@@ -8,6 +8,10 @@ export function loadConfig(env = process.env) {
   const apiToken = env.API_TOKEN || '';
   const requireTls = env.REQUIRE_TLS === 'true' || env.REQUIRE_TLS === '1';
   const allowInsecureHttp = env.ALLOW_INSECURE_HTTP === 'true' || env.ALLOW_INSECURE_HTTP === '1';
+  // Vibe Hosting terminates public HTTPS before forwarding private HTTP to the app.
+  // Explicit opt-in only; the runtime must never expose its container port directly.
+  const vibeHosting = env.VIBE_HOSTING === 'true';
+  const trustedPlatformProxy = env.TRUSTED_PLATFORM_PROXY === 'true';
   const host = env.HOST || (nodeEnv === 'production' && !requireTls ? '127.0.0.1' : '0.0.0.0');
 
   // Fail-closed security validation in production
@@ -18,8 +22,11 @@ export function loadConfig(env = process.env) {
     if (!dashboardPass && !apiToken) {
       throw new Error('[SECURITY FATAL] DASHBOARD_PASS or API_TOKEN must be configured in production (fail-closed authentication).');
     }
+    if (vibeHosting && (!trustedPlatformProxy || requireTls || host !== '0.0.0.0')) {
+      throw new Error('[SECURITY FATAL] VIBE_HOSTING needs TRUSTED_PLATFORM_PROXY=true, REQUIRE_TLS=false, HOST=0.0.0.0 behind the platform HTTPS ingress.');
+    }
     // Review Round 3: Prevent unencrypted public HTTP when terminating TLS via reverse proxy
-    if (!requireTls && host === '0.0.0.0' && !allowInsecureHttp) {
+    if (!requireTls && host === '0.0.0.0' && !allowInsecureHttp && !(vibeHosting && trustedPlatformProxy)) {
       throw new Error(
         '[SECURITY FATAL] Binding to 0.0.0.0 with REQUIRE_TLS=false in production exposes unencrypted HTTP to the public internet. ' +
         'Under Nginx/Caddy reverse proxy TLS termination, set HOST=127.0.0.1. ' +
@@ -37,6 +44,9 @@ export function loadConfig(env = process.env) {
     // Server Identification
     serverId,
     serverName: env.SERVER_NAME || (isVinaHost ? 'VinaHost (11Ship)' : 'Nhân Hòa (AutoTrade)'),
+    vibeHosting,
+    metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
+    peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
     port: parseInt(env.PORT || '5050', 10),
     dbPath: env.DB_PATH || (nodeEnv === 'test' ? ':memory:' : './data/monitor.db'),
