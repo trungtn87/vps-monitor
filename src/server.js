@@ -69,6 +69,15 @@ export async function createServer(customEnv = null) {
     status: config.appHealthUrl ? 'UNKNOWN' : 'DISABLED'
   });
 
+  // Register each extra hosted application independently for health monitoring.
+  for (const app of config.vibeExtraApps || []) {
+    await db.upsertService({
+      serviceId:app.id, serverId:config.serverId, name:app.name,
+      healthUrl:app.resourcesUrl || '',
+      status:app.resourcesUrl ? 'UNKNOWN' : 'DISABLED'
+    });
+  }
+
   // 4. Initialize Components
   const collector = config.vibeHosting ? new VibeContainerCollector() : new SystemCollector();
   // Nhân Hòa's two independent Vibe apps; read-only, fixed public HTTPS URL.
