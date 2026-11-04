@@ -86,10 +86,16 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
     }
   });
 
-  // Case 1: No metrics yet -> isStale = true
+  // Case 1: No metrics; alert only after 3 consecutive checks.
+  await alertEngine.checkLocalAgentHealth();
+  assert.equal(db.getAlertState('vinahost:agent_health').current_state, 'STALE_PENDING');
+  assert.equal(sentAlerts.length, 0);
+  await alertEngine.checkLocalAgentHealth();
+  assert.equal(sentAlerts.length, 0);
   await alertEngine.checkLocalAgentHealth();
   const state1 = db.getAlertState('vinahost:agent_health');
   assert.equal(state1.current_state, 'STALE');
+  assert.equal(state1.consecutive_count, 3);
   assert.equal(sentAlerts.length, 1);
   assert.match(sentAlerts[0].title, /MONITOR AGENT NGỪNG THU THẬP/);
 
