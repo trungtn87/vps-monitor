@@ -2,7 +2,7 @@ name: VPS Monitor CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, deploy/vibe-nhanhoa, deploy/vinahost ]
   pull_request:
     branches: [ main ]
 
@@ -24,6 +24,12 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: VinaHost deployment script syntax
+        run: bash -n scripts/configure-vinahost.sh scripts/setup-vinahost-https.sh scripts/enable-discord-vinahost.sh scripts/set-billing-dates-vinahost.sh
+
       - name: Syntax and Lint Check
         run: |
           node --check src/server.js src/db/*.js src/common/*.js src/agent/*.js src/monitor/*.js src/discord/*.js src/web/*.js
@@ -35,3 +41,148 @@ jobs:
       - name: Run E2E Lifecycle Script Execution (install.sh -> backup.sh -> update.sh -> rollback.sh -> restore.sh)
         run: |
           bash tests/e2e/test-lifecycle.sh
+
+  vibe-docker:
+    name: PostgreSQL + Vibe Docker Build & HTTP Smoke Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: monitor_ci_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Bootstrap private Postgres Monitor schema
+        run: |
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
+            psql -h 127.0.0.1 -U postgres -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE vps_monitor_app;'
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/monitor_schema.sql
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/hosting_quota.sql
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only \
+            -v "$PWD/supabase:/sql:ro" postgres:17 \
+            psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f /sql/vibe_container_sums.sql
+      - name: Setup Node for PostgreSQL integration
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Install PostgreSQL integration test dependency
+        run: npm install --no-audit --no-fund
+      - name: Verify PostgreSQL transaction and restart persistence
+        env:
+          MONITOR_TEST_DATABASE_URL: postgresql://postgres:monitor_ci_only@127.0.0.1:5432/postgres
+        run: node --test tests/integration/pgDatabase.test.js
+      - name: Build Vibe image
+        run: docker build -t vps-monitor-vibe-test .
+      - name: Start app using real Postgres
+        run: |
+          docker run -d --name vps-monitor-vibe-test --network host \
+            -e NODE_ENV=test \
+            -e VIBE_HOSTING=true \
+            -e TRUSTED_PLATFORM_PROXY=true \
+            -e PUBLIC_DASHBOARD=true \
+            -e DB_BACKEND=supabase_postgres \
+            -e DATABASE_URL=postgresql://postgres:monitor_ci_only@127.0.0.1:5432/postgres \
+            -e SERVER_ID=nhanhoa \
+            -e HOST=127.0.0.1 \
+            -e PORT=3000 \
+            -e HEARTBEAT_SECRET=ci-only-secret-for-heartbeat-signature-0000000000 \
+            vps-monitor-vibe-test
+      - name: Check public dashboard and private writes
+        run: |
+          set -eu
+          ready=0
+          for n in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then docker logs vps-monitor-vibe-test; exit 1; fi
+          curl -sS -o /tmp/monitor-status.json -w 'status HTTP %{http_code}\\n' http://127.0.0.1:3000/api/status
+          cat /tmp/monitor-status.json
+          grep -q '"nhanhoa"' /tmp/monitor-status.json
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/status)" = "200" ]
+          echo "POST status: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/status)"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/status)" = "401" ]
+          echo "unsigned heartbeat: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/heartbeat -H 'Content-Type: application/json' -d '{}')" = "400" ]
+          docker run --rm --network host -e PGPASSWORD=monitor_ci_only postgres:17 \
+            psql -h 127.0.0.1 -U postgres -Atc "SELECT count(*) FROM vps_monitor.server_registry" | awk '$1 >= 2 { found=1 } END { exit !found }'
+      - name: Probe Nhân Hòa quota API from a clean server (non-blocking)
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'JS'
+          const endpoint = 'https://vibe-api3.nhanhoa.com:8443/api/vibe/stats/poll?userId=81';
+          try {
+            const res = await fetch(endpoint, {
+              method: 'GET', headers: { accept: 'application/json' },
+              redirect: 'error', signal: AbortSignal.timeout(7000)
+            });
+            let valid = false;
+            let keys = [];
+            let success = null, available = null, stale = null, userMatch = false;
+            if (res.ok) {
+              const payload = await res.json();
+              keys = Object.keys(payload || {}).slice(0,12);
+              success = payload.success ?? null;
+              available = payload.nhanhoa_available ?? null;
+              stale = payload.stale ?? null;
+              userMatch = String(payload.userId) === '81';
+              valid = success === true && userMatch &&
+                Boolean(payload.stats?.cpu && payload.stats?.ram && payload.stats?.disk);
+            }
+            console.log('PROVIDER_QUOTA_HTTP=' + res.status);
+            console.log('PROVIDER_QUOTA_FIELDS=' + JSON.stringify(keys));
+            console.log('PROVIDER_QUOTA_FLAGS=' + JSON.stringify({success,available,stale,userMatch}));
+            console.log('PROVIDER_QUOTA_ANONYMOUS_VALID=' + valid);
+          } catch (err) {
+            console.log('PROVIDER_QUOTA_PROBE_ERROR=' + (err.code || err.name || 'unknown'));
+          }
+          JS
+      - name: Start diagnostic mode with intentionally missing credentials
+        run: |
+          docker run -d --name vps-monitor-vibe-diagnostic --network host \
+            -e NODE_ENV=production \
+            -e VIBE_HOSTING=true \
+            -e TRUSTED_PLATFORM_PROXY=true \
+            -e PUBLIC_DASHBOARD=true \
+            -e HOST=0.0.0.0 \
+            -e PORT=13001 \
+            vps-monitor-vibe-test
+      - name: Verify 502 is replaced by safe startup diagnostics
+        run: |
+          set -eu
+          for n in $(seq 1 20); do
+            code="$(curl -s -o /tmp/vibe-diag.json -w '%{http_code}' http://127.0.0.1:13001/healthz || true)"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 1
+          done
+          [ "$code" = "200" ]
+          grep -q '"status":"DEGRADED"' /tmp/vibe-diag.json
+          grep -q '"errorCode":"HEARTBEAT_SECRET_MISSING"' /tmp/vibe-diag.json
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13001/api/status)" = "503" ]
+          ! grep -qi 'password' /tmp/vibe-diag.json
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-diagnostic || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-test || true
+          docker rm -f vps-monitor-vibe-diagnostic || true

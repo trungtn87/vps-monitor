@@ -240,6 +240,23 @@ h1 {
 .progress-danger { background-color: var(--color-red); }
 .progress-stale { background-color: var(--color-gray); opacity: 0.7; }
 
+/* Transparent provenance for Vibe's two independent application containers. */
+.container-breakdown {
+  margin: .25rem 0 .75rem;
+  padding: .65rem .8rem;
+  background: #0f172a;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  font-size: .78rem;
+}
+.container-breakdown-title { font-weight: 600; color: #cbd5e1; }
+.container-breakdown-subtitle { margin-top: .25rem; color: var(--text-muted); font-size: .72rem; }
+.container-breakdown-item {
+  margin-top: .45rem; display: flex; justify-content: space-between;
+  gap: .75rem; color: #cbd5e1;
+}
+.container-breakdown-item span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* Stats Mini Grid */
 .stats-mini-grid {
   display: grid;

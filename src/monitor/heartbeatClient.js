@@ -40,7 +40,7 @@ export class HeartbeatClient {
     this.sequence++;
     const nowIso = new Date().toISOString();
     const nonce = generateNonce();
-    const metrics = this.getMetricsPayload ? this.getMetricsPayload() : {};
+    const metrics = this.getMetricsPayload ? await this.getMetricsPayload() : {};
 
     const payload = {
       senderId: this.serverId,

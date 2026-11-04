@@ -63,6 +63,27 @@ function renderStatus(data) {
   for (const srv of data.servers) {
     const prefix = srv.serverId === 'vinahost' ? 'vh' : 'nh';
 
+    // Use account-wide Vibe quotas only if the independent API has returned
+    // a fresh verified sample; never mislabel container values as host totals.
+    const quota = srv.hostingQuota && !srv.hostingQuota.isStale ? srv.hostingQuota : null;
+    const summed = srv.serverId === 'nhanhoa' &&
+      srv.containerTotals && !srv.containerTotals.isStale &&
+      Array.isArray(srv.containerTotals.apps) && srv.containerTotals.apps.length >= 2
+        ? srv.containerTotals : null;
+    if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed,srv.services);
+
+    // Show resource provenance: the Vibe app runs in an isolated container.
+    const scopeBadge = document.getElementById(`${prefix}-app-badge`);
+    if (scopeBadge) {
+      const appName = prefix === 'nh' ? 'AutoTrade' : '11Ship';
+      scopeBadge.textContent = quota && prefix === 'nh'
+        ? 'Tổng gói Vibe Hosting'
+        : summed && prefix === 'nh' ? `${summed.measuredCount}/${summed.totalCount} dự án · Container`
+        : srv.metricScope === 'CONTAINER'
+          ? `${appName} · Container`
+          : appName;
+    }
+
     // Status dot & pill
     const state = srv.connectionState || 'UNKNOWN';
     const pill = document.getElementById(`${prefix}-status`);
@@ -105,7 +126,8 @@ function renderStatus(data) {
     const svcEl = document.getElementById(`${prefix}-service`);
     if (svcEl) {
       if (srv.services && srv.services.length > 0) {
-        const s = srv.services[0];
+        const primaryId = prefix === 'nh' ? 'autotrade' : '11ship';
+        const s = srv.services.find(x => x.service_id === primaryId) || srv.services[0];
         svcEl.textContent = `${s.status} (${s.name})`;
         svcEl.style.color = s.status === 'HEALTHY' ? '#34d399' : (s.status === 'DISABLED' ? '#94a3b8' : '#f87171');
       } else {
@@ -118,9 +140,36 @@ function renderStatus(data) {
     if (srv.metrics) {
       const m = srv.metrics;
       const staleTag = m.isStale ? ' (cũ)' : '';
-      updateMetricBar(`${prefix}-cpu`, m.cpuPct, `${m.cpuPct}%${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-ram`, m.ramPct, `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`, m.isStale);
-      updateMetricBar(`${prefix}-disk`, m.diskPct, `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`, m.isStale);
+      if (quota && prefix === 'nh') {
+        updateMetricBar(`${prefix}-cpu`, quota.cpuPct,
+          `${quota.cpuUsedVcpu.toFixed(3)} / ${quota.cpuQuotaVcpu} vCPU (${quota.cpuPct.toFixed(1)}%)`);
+        updateMetricBar(`${prefix}-ram`, quota.ramPct,
+          `${quota.ramUsedMb.toFixed(1)} / ${quota.ramQuotaMb} MB (${quota.ramPct.toFixed(1)}%)`);
+        updateMetricBar(`${prefix}-disk`, quota.diskPct,
+          `${quota.diskUsedMb.toFixed(2)} / ${quota.diskQuotaMb} MB (${quota.diskPct.toFixed(1)}%)`);
+      } else if (summed && prefix === 'nh') {
+        const complete = summed.complete === true;
+        const cpuKnown = complete && Number.isFinite(summed.cpuUsedVcpu);
+        const suffix = `${summed.measuredCount}/${summed.totalCount} dự án`;
+        updateMetricBar('nh-cpu', cpuKnown ? summed.cpuPct : 0,
+          cpuKnown
+            ? `${summed.cpuUsedVcpu.toFixed(3)} / ${summed.cpuQuotaVcpu} vCPU (${summed.cpuPct.toFixed(1)}%) · ${suffix}`
+            : `Chưa đủ CPU · ${suffix}`);
+        updateMetricBar('nh-ram', summed.ramPct,
+          complete
+            ? `${summed.ramUsedMb.toFixed(1)} / ${summed.ramQuotaMb} MB (${summed.ramPct.toFixed(1)}%) · ${suffix}`
+            : `Đã đo ${summed.ramUsedMb.toFixed(1)} MB · ${suffix} (chưa đủ tổng)`);
+        updateMetricBar('nh-disk', 0, 'N/A · chưa có dữ liệu lưu trữ');
+      } else {
+        updateMetricBar(`${prefix}-cpu`, m.cpuPct,
+          `${m.cpuPct}%${srv.metricScope === 'CONTAINER' ? ' (process)' : ''}${staleTag}`, m.isStale);
+        updateMetricBar(`${prefix}-ram`, m.ramPct,
+          m.ramTotalMb > 0 ? `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`
+            : `${m.ramUsedMb} MB (container limit N/A)${staleTag}`, m.isStale);
+        updateMetricBar(`${prefix}-disk`, m.diskPct,
+          m.diskTotalGb > 0 ? `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`
+            : `N/A (không có quyền host)${staleTag}`, m.isStale);
+      }
 
       const rxMb = (m.netRxBytes / (1024 * 1024)).toFixed(1);
       const txMb = (m.netTxBytes / (1024 * 1024)).toFixed(1);
@@ -175,6 +224,39 @@ function renderStatus(data) {
   }
 }
 
+function renderNhContainerBreakdown(summed,services=[]) {
+  const el = document.getElementById('nh-container-breakdown');
+  if (!el) return;
+  el.replaceChildren();
+  const title = document.createElement('div');
+  title.className = 'container-breakdown-title';
+  title.textContent = summed
+    ? `${summed.measuredCount}/${summed.totalCount} dự án có số liệu CPU/RAM`
+    : 'Đang chờ số liệu ứng dụng Nhân Hòa';
+  el.appendChild(title);
+  if (summed) {
+    for (const app of summed.apps) {
+      const line = document.createElement('div');
+      line.className = 'container-breakdown-item';
+      const name = document.createElement('span');
+      name.textContent = app.name;
+      const value = document.createElement('span');
+      const svc = services.find(s => s.service_id === app.appId);
+      const health = svc && svc.status !== 'DISABLED' ? `${svc.status} · ` : '';
+      value.textContent = health + (Number.isFinite(app.ramUsedMb)
+        ? `${app.ramUsedMb.toFixed(1)} MB · ${Number.isFinite(app.cpuVcpu) ? app.cpuVcpu.toFixed(3)+' vCPU' : 'CPU chưa đủ'}`
+        : 'Chưa kết nối số liệu');
+      line.append(name, value);
+      el.appendChild(line);
+    }
+  }
+  const note = document.createElement('div');
+  note.className = 'container-breakdown-subtitle';
+  note.textContent = !summed ? 'Chưa có mẫu đo ứng dụng.'
+    : summed.complete ? 'Tổng các container đã đo, không gồm chi phí hệ thống nhà cung cấp; Disk N/A.'
+    : 'Mức sử dụng chỉ cộng các dự án đã đo, chưa phải tổng toàn bộ ứng dụng.';
+  el.appendChild(note);
+}
 function updateMetricBar(prefix, pct, labelText, isStale = false) {
   const valEl = document.getElementById(prefix);
   const barEl = document.getElementById(`${prefix}-bar`);

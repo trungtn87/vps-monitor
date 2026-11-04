@@ -8,7 +8,7 @@ import { HttpRouter } from '../../src/web/routes.js';
 import { AuthGuard } from '../../src/web/auth.js';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
-test('Blocker 2: recordAlertTransition executes in a single atomic transaction', () => {
+test('Blocker 2: recordAlertTransition executes in a single atomic transaction', async () => {
   const db = new MonitorDatabase(':memory:');
   db.upsertServer({ serverId: 'vinahost', name: 'VinaHost', role: '11ship' });
 
@@ -86,10 +86,16 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
     }
   });
 
-  // Case 1: No metrics yet -> isStale = true
+  // Case 1: No metrics; alert only after 3 consecutive checks.
+  await alertEngine.checkLocalAgentHealth();
+  assert.equal(db.getAlertState('vinahost:agent_health').current_state, 'STALE_PENDING');
+  assert.equal(sentAlerts.length, 0);
+  await alertEngine.checkLocalAgentHealth();
+  assert.equal(sentAlerts.length, 0);
   await alertEngine.checkLocalAgentHealth();
   const state1 = db.getAlertState('vinahost:agent_health');
   assert.equal(state1.current_state, 'STALE');
+  assert.equal(state1.consecutive_count, 3);
   assert.equal(sentAlerts.length, 1);
   assert.match(sentAlerts[0].title, /MONITOR AGENT NGỪNG THU THẬP/);
 
@@ -109,6 +115,15 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
   });
 
   await alertEngine.checkLocalAgentHealth();
+  assert.equal(db.getAlertState('vinahost:agent_health').current_state,'RECOVERY_PENDING');
+  assert.equal(sentAlerts.length,1,'one fresh sample is not enough for Discord recovery');
+  for (let sample = 0; sample < 2; sample++) {
+    db.insertMetrics({
+      serverId:'vinahost', cpuPct:30,ramUsedMb:1000,ramTotalMb:4000,ramPct:25,
+      diskUsedGb:20,diskTotalGb:100,diskPct:20,netRxBytes:0,netTxBytes:0,uptimeSec:5000
+    });
+    await alertEngine.checkLocalAgentHealth();
+  }
   const state2 = db.getAlertState('vinahost:agent_health');
   assert.equal(state2.current_state, 'HEALTHY');
   assert.equal(sentAlerts.length, 2);
@@ -157,7 +172,7 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
   db.close();
 });
 
-test('Blocker 5: Discord interactions fail-closed in production when allowlist is empty', () => {
+test('Blocker 5: Discord interactions fail-closed in production when allowlist is empty', async () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pubKeyHex = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('hex');
 
@@ -185,7 +200,7 @@ test('Blocker 5: Discord interactions fail-closed in production when allowlist i
   const timestamp = String(Math.floor(Date.now() / 1000));
   const sig = sign(null, Buffer.from(timestamp + interactionBody), privateKey).toString('hex');
 
-  const prodRes = prodHandler.handle(interactionBody, sig, timestamp);
+  const prodRes = await prodHandler.handle(interactionBody, sig, timestamp);
   assert.equal(prodRes.status, 200);
   assert.match(prodRes.body.data.content, /Chế độ production yêu cầu cấu hình danh sách được phép/);
 
@@ -198,7 +213,7 @@ test('Blocker 5: Discord interactions fail-closed in production when allowlist i
     nodeEnv: 'development'
   });
 
-  const devRes = devHandler.handle(interactionBody, sig, timestamp);
+  const devRes = await devHandler.handle(interactionBody, sig, timestamp);
   assert.equal(devRes.status, 200);
   assert.equal(devRes.body.data.content, 'OK');
 });
@@ -256,6 +271,8 @@ test('Blocker 5: Resource sample counter and last_metric_id persist across servi
 
   // SIMULATE PROCESS RESTART: Create new AlertEngine instance with same SQLite database
   const engine2 = new AlertEngine({ db, evaluator, notifier: fakeNotifier, config });
+
+  await engine2.init();
 
   // Right after restart: check that same old metric is NOT re-evaluated or double-counted
   await engine2.checkResources();
