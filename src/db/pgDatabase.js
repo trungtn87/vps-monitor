@@ -162,14 +162,17 @@ export class PgMonitorDatabase {
       source:'CONTAINER_SUM',scope:'VIBE_APPLICATIONS_ONLY',
       sampledAt:r.collected_at,ageSec,isStale:ageSec>180,
       cpuUsedVcpu:r.cpu_used_vcpu,ramUsedMb:r.ram_used_mb,
-      apps:r.apps_json
+      apps:r.apps_json,
+      totalCount:Array.isArray(r.apps_json)?r.apps_json.length:0,
+      measuredCount:Array.isArray(r.apps_json)?r.apps_json.filter(a=>typeof a.ramUsedMb==='number' && Number.isFinite(a.ramUsedMb)).length:0,
+      complete:Array.isArray(r.apps_json) && r.apps_json.length>0 && r.apps_json.every(a=>typeof a.ramUsedMb==='number' && Number.isFinite(a.ramUsedMb))
     };
   }
-  async getVibeContainerSumHistory(serverId, limit=60, cpuQuotaVcpu=1, ramQuotaMb=2048) {
+  async getVibeContainerSumHistory(serverId, limit=60, cpuQuotaVcpu=1, ramQuotaMb=2048, expectedApps=2) {
     const rows=all(await this.q(`SELECT cpu_used_vcpu,ram_used_mb,collected_at
       FROM vps_monitor.vibe_container_sums
-      WHERE server_id=$1 AND cpu_used_vcpu IS NOT NULL ORDER BY id DESC LIMIT $2`,[
-      serverId,limit
+      WHERE server_id=$1 AND cpu_used_vcpu IS NOT NULL AND jsonb_array_length(apps_json)=$3 ORDER BY id DESC LIMIT $2`,[
+      serverId,limit,expectedApps
     ]));
     return rows.reverse().map(r=>({
       cpu_pct:Math.min(100,100*r.cpu_used_vcpu/cpuQuotaVcpu),
