@@ -66,6 +66,11 @@ test('Scenario 2: Mất heartbeat trên 180 giây (-> DISCONNECTED and alerts vi
   `).run();
 
   await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
+  assert.strictEqual(db.getAlertState('nhanhoa:heartbeat').consecutive_count, 1);
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
+  await alertEngine.checkPeerHeartbeat();
 
   // Evaluated to DISCONNECTED
   const stateRecord = db.getAlertState('nhanhoa:heartbeat');
@@ -214,6 +219,9 @@ test('Scenario 6: Một VPS ngừng phản hồi (Detected by peer node)', async
   `).run();
 
   await alertEngine.checkPeerHeartbeat();
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
+  await alertEngine.checkPeerHeartbeat();
 
   assert.strictEqual(notifier.alerts.length, 1);
   assert.ok(notifier.alerts[0].description.includes('VinaHost (11Ship)'));
@@ -283,18 +291,16 @@ test('Scenario 9: Discord không gửi trùng cảnh báo (Duplicate alert suppr
     VALUES ('nhanhoa', 'vinahost', 1, datetime('now', '-200 seconds'), datetime('now', '-200 seconds'), 'VALID')
   `).run();
 
-  // Cycle 1: alerts
+  // Cycle 1 and 2: no noisy one-off Discord notification
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
+  // Cycle 3: one alert, then no repeats for the same incident
   await alertEngine.checkPeerHeartbeat();
   assert.strictEqual(notifier.alerts.length, 1);
-
-  // Cycle 2: still disconnected -> NO duplicate alert!
   await alertEngine.checkPeerHeartbeat();
   assert.strictEqual(notifier.alerts.length, 1);
-
-  // Cycle 3: still disconnected -> NO duplicate alert!
-  await alertEngine.checkPeerHeartbeat();
-  assert.strictEqual(notifier.alerts.length, 1);
-
   db.close();
 });
 
@@ -542,6 +548,9 @@ test('Finding 4 Special: Silent boot-time failure alert when peer never connects
   const notifier = new MockDiscordNotifier();
   const alertEngine = new AlertEngine({ db, evaluator, notifier, config });
 
+  await alertEngine.checkPeerHeartbeat();
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length, 0);
   await alertEngine.checkPeerHeartbeat();
 
   assert.strictEqual(notifier.alerts.length, 1);
