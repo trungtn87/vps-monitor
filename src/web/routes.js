@@ -159,6 +159,16 @@ export class HttpRouter {
         }
 
         const latestMetrics = this.db.getLatestMetrics(srv.server_id);
+        const containerTotals = srv.server_id === 'nhanhoa'
+          ? this.db.getLatestVibeContainerSum(srv.server_id) : null;
+        if (containerTotals) {
+          // Vibe deployment quota: the sum is NOT physical VPS host usage.
+          containerTotals.cpuQuotaVcpu = 1;
+          containerTotals.ramQuotaMb = 2048;
+          containerTotals.cpuPct = containerTotals.cpuUsedVcpu === null
+            ? null : 100 * containerTotals.cpuUsedVcpu;
+          containerTotals.ramPct = 100 * containerTotals.ramUsedMb / 2048;
+        }
         const services = this.db.getServicesByServer(srv.server_id);
         const expiry = isLocal ? this.config.expiryDate : this.config.peerExpiryDate;
         const expiryEval = this.evaluator.evaluateExpiry(expiry);
@@ -186,6 +196,7 @@ export class HttpRouter {
           serverId: srv.server_id,
           name: srv.name,
           isLocal,
+          containerTotals,
           role: srv.role,
           connectionState,
           elapsedSec,
