@@ -45,6 +45,22 @@ test('real PostgreSQL adapter preserves metrics and atomic alert outbox across r
     assert.ok(Math.abs(trend.at(-1).cpu_pct - 1.59) < 0.0001);
     assert.ok(Math.abs(trend.at(-1).ram_pct - 156.7/2048*100) < 0.0001);
     assert.notEqual(combined.scope,'VIBE_HOSTING_ACCOUNT');
+    await d.insertVibeContainerSum('pg-ci-monitor', {
+      cpuUsedVcpu:null,ramUsedMb:156.7,
+      apps:[
+        {appId:'vps-monitor',name:'VPS Monitor',cpuVcpu:0.003,ramUsedMb:34.7},
+        {appId:'autotrade',name:'AutoTrade',cpuVcpu:0.0129,ramUsedMb:122},
+        {appId:'third-web',name:'Dự án mới',cpuVcpu:null,ramUsedMb:null,status:'UNAVAILABLE'}
+      ]
+    });
+    const missingThird=await d.getLatestVibeContainerSum('pg-ci-monitor');
+    assert.equal(missingThird.totalCount,3);
+    assert.equal(missingThird.measuredCount,2);
+    assert.equal(missingThird.complete,false);
+    assert.equal(missingThird.cpuUsedVcpu,null);
+    assert.deepEqual(await d.getVibeContainerSumHistory('pg-ci-monitor',10,1,2048,3),[]);
+    assert.ok((await d.getVibeContainerSumHistory('pg-ci-monitor',10,1,2048,2)).length>=1);
+
     const quota = await d.getLatestHostingQuota('pg-ci-monitor');
     assert.equal(quota.scope,'VIBE_HOSTING_ACCOUNT');
     assert.equal(quota.cpuUsedVcpu,0.0129);
