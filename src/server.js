@@ -139,7 +139,19 @@ export async function createServer(customEnv = null) {
       error: primary.last_error
     } : null;
 
-    if (!latestMetrics) return { appService, metricScope: config.metricScope };
+    // Authenticated heartbeat carries a bounded snapshot, not a provider-wide host metric.
+    const peerContainerTotals = config.serverId === 'nhanhoa' && db.getLatestVibeContainerSum
+      ? await db.getLatestVibeContainerSum(config.serverId) : null;
+    const vibeContainerSum = peerContainerTotals && !peerContainerTotals.isStale
+      ? {
+          sampledAt: new Date(peerContainerTotals.sampledAt.includes('T')
+            ? peerContainerTotals.sampledAt : peerContainerTotals.sampledAt.replace(' ', 'T') + 'Z').toISOString(),
+          cpuUsedVcpu: peerContainerTotals.cpuUsedVcpu,
+          ramUsedMb: peerContainerTotals.ramUsedMb,
+          apps: peerContainerTotals.apps
+        } : null;
+
+    if (!latestMetrics) return { appService, metricScope: config.metricScope, vibeContainerSum };
 
     return {
       metricScope: config.metricScope,
@@ -153,7 +165,8 @@ export async function createServer(customEnv = null) {
       netRxBytes: latestMetrics.net_rx_bytes,
       netTxBytes: latestMetrics.net_tx_bytes,
       uptimeSec: latestMetrics.uptime_sec,
-      appService
+      appService,
+      vibeContainerSum
     };
   };
 

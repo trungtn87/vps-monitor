@@ -174,6 +174,7 @@ export class HttpRouter {
           this.db.getLatestVibeContainerSum
           ? await this.db.getLatestVibeContainerSum(srv.server_id) : null;
         if (containerTotals) {
+          // Remote Vibe values are container-only, never host-wide.
           containerTotals.cpuQuotaVcpu = this.config.vibePlanCpuVcpu;
           containerTotals.ramQuotaMb = this.config.vibePlanRamMb;
           containerTotals.cpuPct = containerTotals.cpuUsedVcpu === null ? null
