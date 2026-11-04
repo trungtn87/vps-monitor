@@ -115,6 +115,16 @@ test('Scenario 3: Heartbeat phục hồi (DISCONNECTED -> RECOVERED alert)', asy
     status: 'VALID'
   });
 
+  // Three *distinct* new heartbeat samples are required for stable recovery.
+  let received=0;
+  evaluator.evaluatePeerHeartbeat = async () => ({
+    state:NodeState.ONLINE, elapsedSec:0,
+    lastReceivedAt:new Date(Date.now()+received++*1000).toISOString(),
+    isStartupFailure:false
+  });
+  await alertEngine.checkPeerHeartbeat();
+  await alertEngine.checkPeerHeartbeat();
+  assert.strictEqual(notifier.alerts.length,0,'do not notify a one- or two-sample recovery');
   await alertEngine.checkPeerHeartbeat();
 
   // New state is ONLINE
