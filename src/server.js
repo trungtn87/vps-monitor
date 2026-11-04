@@ -270,25 +270,31 @@ export async function createServer(customEnv = null) {
         lastError: appRes.error
       });
 
-      // Failed/missing samples do not overwrite the last valid aggregate.
-      // The UI marks the last valid record stale after 180 seconds.
       if (autoTradeUsageClient) {
-        try {
-          const remote = await autoTradeUsageClient.read();
-          const local = {
-            name:'VPS Monitor',appId:'vps-monitor',
-            cpuVcpu:Math.round(metrics.cpuPct*1000)/100000,
-            ramUsedMb:metrics.ramUsedMb,
-            ramLimitMb:metrics.ramTotalMb>0 ? metrics.ramTotalMb : null,
-            sourceCpu:'PROCESS',sourceRam:metrics.ramTotalMb>0?'CGROUP_V2':'PROCESS',
-            sampledAt:new Date().toISOString()
-          };
-          const total=composeVibeContainerSum(local,remote);
-          await db.insertVibeContainerSum(config.serverId,total);
-        } catch (err) {
-          logger.warn('AutoTrade container usage unavailable: '+
-            String(err.message).replace(/[^A-Za-z0-9_ ]/g,'').slice(0,70));
+        const unavailable = app => ({ appId:app.id, name:app.name,
+          ramUsedMb:null, cpuVcpu:null, ramLimitMb:null, sampledAt:null, status:'UNAVAILABLE' });
+        let remote;
+        try { remote = await autoTradeUsageClient.read(); }
+        catch (err) {
+          logger.warn('AutoTrade metrics unavailable '+String(err.message).slice(0,70));
+          remote=unavailable({id:'autotrade',name:'AutoTrade'});
         }
+        const extras=await Promise.all(extraVibeApps.map(async (app,i) => {
+          if(!extraUsageClients[i]) return unavailable(app);
+          try { return await extraUsageClients[i].read(); }
+          catch (err) {
+            logger.warn('Extra app '+app.id+' metrics unavailable '+String(err.message).slice(0,70));
+            return unavailable(app);
+          }
+        }));
+        const local={ name:'VPS Monitor',appId:'vps-monitor',
+          cpuVcpu:Math.round(metrics.cpuPct*1000)/100000,
+          ramUsedMb:metrics.ramUsedMb,
+          ramLimitMb:metrics.ramTotalMb>0?metrics.ramTotalMb:null,
+          sourceCpu:'PROCESS',sourceRam:metrics.ramTotalMb>0?'CGROUP_V2':'PROCESS',
+          sampledAt:new Date().toISOString(), status:'MEASURED' };
+        const total=composeVibeContainerSum(local,remote,Date.now(),extras);
+        await db.insertVibeContainerSum(config.serverId,total);
       }
     } catch (err) {
       logger.error('Error during local agent collection cycle:', err);
