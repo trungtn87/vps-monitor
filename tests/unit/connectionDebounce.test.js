@@ -57,31 +57,34 @@ test('connection fails 1, 2 times: no Discord; failure 3: one; recovery resets',
 test('app UNREACHABLE / UNHEALTHY is treated as one outage episode',async()=>{
   const {db,sent,alertEngine}=fixture();
   try {
+    let probe=0;
     const change = status => db.upsertService({
       serviceId:'11ship',serverId:'vinahost',name:'11Ship Backend',
-      healthUrl:'http://127.0.0.1:3000/v1/health/ready',status
+      healthUrl:'http://127.0.0.1:3000/v1/health/ready',status,
+      lastCheck:new Date(Date.parse('2026-11-04T00:00:00Z')+probe++*60000).toISOString()
     });
-    change('UNREACHABLE');
+    change('UNREACHABLE'); await alertEngine.checkLocalAppHealth();
     await alertEngine.checkLocalAppHealth();
-    await alertEngine.checkLocalAppHealth();
+    assert.equal(db.getAlertState('11ship:health').consecutive_count,1,
+      'rechecking the same probe may not increase the counter');
+    change('UNREACHABLE'); await alertEngine.checkLocalAppHealth();
     assert.equal(sent.length,0);
-    change('HEALTHY');
-    await alertEngine.checkLocalAppHealth();
+    change('HEALTHY'); await alertEngine.checkLocalAppHealth();
     assert.equal(sent.length,0,'no recovery message for short blip');
-    change('UNREACHABLE');
-    await alertEngine.checkLocalAppHealth();
-    change('UNHEALTHY');
-    await alertEngine.checkLocalAppHealth();
+    change('UNREACHABLE'); await alertEngine.checkLocalAppHealth();
+    change('UNHEALTHY'); await alertEngine.checkLocalAppHealth();
     assert.equal(sent.length,0);
-    await alertEngine.checkLocalAppHealth();
-    assert.equal(sent.length,1);
+    change('UNHEALTHY'); await alertEngine.checkLocalAppHealth();
+    assert.equal(sent.length,1,'3 distinct failure probes required');
     assert.equal(db.getAlertState('11ship:health').current_state,'DOWN');
-    change('UNREACHABLE');
-    await alertEngine.checkLocalAppHealth();
+    change('UNREACHABLE'); await alertEngine.checkLocalAppHealth();
     assert.equal(sent.length,1,'changing failure subtype cannot flood Discord');
-    change('HEALTHY');
-    await alertEngine.checkLocalAppHealth();
-    await alertEngine.checkLocalAppHealth();
-    assert.equal(sent.length,2,'one recovery');
+    change('HEALTHY'); await alertEngine.checkLocalAppHealth();
+    change('HEALTHY'); await alertEngine.checkLocalAppHealth();
+    assert.equal(sent.length,1,'recovery must be stable before Discord');
+    change('HEALTHY'); await alertEngine.checkLocalAppHealth();
+    assert.equal(sent.length,2,'one stable recovery');
+    change('HEALTHY'); await alertEngine.checkLocalAppHealth();
+    assert.equal(sent.length,2,'one recovery per incident');
   } finally { db.close(); }
 });
