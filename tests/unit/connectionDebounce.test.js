@@ -12,15 +12,16 @@ function fixture() {
   const config={serverId:'vinahost',serverName:'VinaHost',peerServerId:'nhanhoa',
     peerServerName:'Nhân Hòa',connectionAlertConsecutiveCount:3};
   let connection = NodeState.DISCONNECTED;
+  let hbSeq = 0;
   const evaluator={async evaluatePeerHeartbeat(){
-    return {state:connection,elapsedSec:250,lastReceivedAt:'2026-11-04 10:00:00',isStartupFailure:false};
+    return {state:connection,elapsedSec:250,lastReceivedAt:new Date(Date.parse('2026-11-04T10:00:00Z')+hbSeq*60000).toISOString(),isStartupFailure:false};
   }};
   const alertEngine=new AlertEngine({db,evaluator,notifier,config});
-  return {db,sent,alertEngine,setConnection:v=>{connection=v;}};
+  return {db,sent,alertEngine,setConnection:v=>{connection=v;},nextHeartbeat:()=>{hbSeq++;}};
 }
 
 test('connection fails 1, 2 times: no Discord; failure 3: one; recovery resets',async()=>{
-  const {db,sent,alertEngine,setConnection}=fixture();
+  const {db,sent,alertEngine,setConnection,nextHeartbeat}=fixture();
   try {
     await alertEngine.checkPeerHeartbeat();
     assert.equal(sent.length,0);
@@ -42,10 +43,13 @@ test('connection fails 1, 2 times: no Discord; failure 3: one; recovery resets',
     await alertEngine.checkPeerHeartbeat();
     assert.equal(sent.length,1,'no repeats during same prolonged incident');
     setConnection(NodeState.RECOVERED);
+    nextHeartbeat(); await alertEngine.checkPeerHeartbeat();
+    nextHeartbeat(); await alertEngine.checkPeerHeartbeat();
+    assert.equal(sent.length,1,'two successes are not yet a stable recovery');
+    nextHeartbeat(); await alertEngine.checkPeerHeartbeat();
+    assert.equal(sent.length,2,'3 distinct new heartbeats confirm recovery');
     await alertEngine.checkPeerHeartbeat();
-    assert.equal(sent.length,2,'recovery is one message only after a confirmed alert');
-    await alertEngine.checkPeerHeartbeat();
-    assert.equal(sent.length,2);
+    assert.equal(sent.length,2,'same received heartbeat cannot create another notice');
     setConnection(NodeState.DISCONNECTED);
     await alertEngine.checkPeerHeartbeat();
     await alertEngine.checkPeerHeartbeat();
