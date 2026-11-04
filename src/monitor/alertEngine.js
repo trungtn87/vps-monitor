@@ -217,7 +217,7 @@ export class AlertEngine {
         alertKey, currentState:'HEALTHY', consecutiveCount:0,
         details:null, serverId:this.config.serverId, eventType:'MONITOR_RECOVERED',
         severity:'INFO',message,eventDetails:null,
-        alertPayload:{title:'✅ MONITOR AGENT ĐÃ KHÔI PHỤC',description:message,
+        alertPayload:{title:'✅ PHỤC HỒI: MONITOR AGENT HOẠT ĐỘNG BÌNH THƯỜNG',description:message,
           color:0x2ECC71,fields:[{name:'VPS',value:this.config.serverName,inline:true}]}
       });
       await this.processOutbox();
