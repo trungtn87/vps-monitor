@@ -395,3 +395,9 @@ h1 {
   color: var(--text-muted);
   padding: 1rem 0;
 }
+
+/* Peer app usage breakdown from authenticated heartbeat */
+.container-breakdown{margin:12px 0;padding:12px;background:rgba(15,23,42,.45);border:1px solid rgba(148,163,184,.2);border-radius:8px;font-size:12px}
+.container-breakdown-title{font-weight:600;margin-bottom:8px}
+.container-breakdown-item{display:flex;justify-content:space-between;gap:12px;margin:6px 0;flex-wrap:wrap}
+.container-breakdown-subtitle{font-size:11px;color:#94a3b8;margin-top:8px}
