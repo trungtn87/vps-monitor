@@ -70,7 +70,7 @@ function renderStatus(data) {
       srv.containerTotals && !srv.containerTotals.isStale &&
       Array.isArray(srv.containerTotals.apps) && srv.containerTotals.apps.length >= 2
         ? srv.containerTotals : null;
-    if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed);
+    if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed,srv.services);
 
     // Show resource provenance: the Vibe app runs in an isolated container.
     const scopeBadge = document.getElementById(`${prefix}-app-badge`);
@@ -126,7 +126,8 @@ function renderStatus(data) {
     const svcEl = document.getElementById(`${prefix}-service`);
     if (svcEl) {
       if (srv.services && srv.services.length > 0) {
-        const s = srv.services[0];
+        const primaryId = prefix === 'nh' ? 'autotrade' : '11ship';
+        const s = srv.services.find(x => x.service_id === primaryId) || srv.services[0];
         svcEl.textContent = `${s.status} (${s.name})`;
         svcEl.style.color = s.status === 'HEALTHY' ? '#34d399' : (s.status === 'DISABLED' ? '#94a3b8' : '#f87171');
       } else {
@@ -223,7 +224,7 @@ function renderStatus(data) {
   }
 }
 
-function renderNhContainerBreakdown(summed) {
+function renderNhContainerBreakdown(summed,services=[]) {
   const el = document.getElementById('nh-container-breakdown');
   if (!el) return;
   el.replaceChildren();
@@ -240,9 +241,11 @@ function renderNhContainerBreakdown(summed) {
       const name = document.createElement('span');
       name.textContent = app.name;
       const value = document.createElement('span');
-      value.textContent = Number.isFinite(app.ramUsedMb)
+      const svc = services.find(s => s.service_id === app.appId);
+      const health = svc && svc.status !== 'DISABLED' ? `${svc.status} · ` : '';
+      value.textContent = health + (Number.isFinite(app.ramUsedMb)
         ? `${app.ramUsedMb.toFixed(1)} MB · ${Number.isFinite(app.cpuVcpu) ? app.cpuVcpu.toFixed(3)+' vCPU' : 'CPU chưa đủ'}`
-        : 'Chưa kết nối số liệu';
+        : 'Chưa kết nối số liệu');
       line.append(name, value);
       el.appendChild(line);
     }
