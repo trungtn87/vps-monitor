@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVibeExtraApps } from '../../src/common/config.js';
+import { parseVibeExtraApps, loadConfig } from '../../src/common/config.js';
 import { ExtraVibeAppClient, parseExtraVibeContainer } from '../../src/agent/extraVibeAppClient.js';
 import { composeVibeContainerSum } from '../../src/agent/autoTradeContainerClient.js';
 
@@ -56,4 +56,22 @@ test('three-app sum requires every sample; missing third project stays visible',
   assert.equal(partial.measuredCount,2);
   assert.equal(partial.complete,false);
   assert.equal(partial.apps[2].name,'Dự án mới');
+});
+
+test('Nhân Hòa production roster includes 11Local by default and accepts its HTTPS metrics URL', () => {
+  const env = {
+    NODE_ENV:'production', SERVER_ID:'nhanhoa', VIBE_HOSTING:'true',
+    TRUSTED_PLATFORM_PROXY:'true', HOST:'0.0.0.0', REQUIRE_TLS:'false',
+    HEARTBEAT_SECRET:'a'.repeat(64),
+    DASHBOARD_PASS:'placeholder-test',
+    DB_BACKEND:'supabase_postgres',
+    DATABASE_URL:'postgresql://tester@db.gmpgtwtxhjwjeincvkxn.supabase.co:5432/postgres'
+  };
+  const base=loadConfig(env);
+  assert.deepEqual(base.vibeExtraApps,[{id:'11local',name:'11Local',resourcesUrl:''}]);
+  const url='https://sample.vibe3.vnws.com/api/monitor/resources';
+  const configured=loadConfig({...env,
+    VIBE_EXTRA_APPS_JSON:JSON.stringify([{id:'11local',name:'11Local',resourcesUrl:url}])
+  });
+  assert.equal(configured.vibeExtraApps[0].resourcesUrl,url);
 });
