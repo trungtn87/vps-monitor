@@ -48,21 +48,32 @@ export class AutoTradeContainerClient {
   }
 }
 
-export function composeVibeContainerSum(local, remote, now=Date.now()) {
-  if(!local || !remote || !numeric(local.ramUsedMb) ||
-      !(local.cpuVcpu===null || numeric(local.cpuVcpu,64)) ||
-      !numeric(remote.ramUsedMb) ||
-      !(remote.cpuVcpu===null || numeric(remote.cpuVcpu,64)) ||
-      !Number.isFinite(Date.parse(local.sampledAt)) ||
-      Math.abs(now-Date.parse(local.sampledAt))>120000 ||
-      Math.abs(now-Date.parse(remote.sampledAt))>120000) {
+export function composeVibeContainerSum(local, remote, now=Date.now(), extras=[]) {
+  if(!local || !remote || !Array.isArray(extras) || extras.length>8) {
     throw new Error('VIBE_CONTAINER_SAMPLE_INCOMPLETE');
   }
-  const cpuVcpu = local.cpuVcpu === null || remote.cpuVcpu === null
-    ? null : Math.round((local.cpuVcpu+remote.cpuVcpu)*100000)/100000;
-  return {
-    cpuUsedVcpu:cpuVcpu,
-    ramUsedMb:Math.round((local.ramUsedMb+remote.ramUsedMb)*100)/100,
-    apps:[local,remote],
-  };
+  const apps=[local,remote,...extras];
+  // Missing services remain visible but cannot silently contribute zero.
+  const readable=apps.map(app=>{
+    if(!app || typeof app.name!=='string' || typeof app.appId!=='string') {
+      throw new Error('VIBE_CONTAINER_SAMPLE_INCOMPLETE');
+    }
+    if(app.status==='UNAVAILABLE' && app.ramUsedMb===null && app.cpuVcpu===null){
+      return false;
+    }
+    if(!numeric(app.ramUsedMb) ||
+       !(app.cpuVcpu===null || numeric(app.cpuVcpu,64)) ||
+       !Number.isFinite(Date.parse(app.sampledAt)) ||
+       Math.abs(now-Date.parse(app.sampledAt))>120000) {
+      throw new Error('VIBE_CONTAINER_SAMPLE_INCOMPLETE');
+    }
+    return true;
+  });
+  const measured=apps.filter((app,i)=>readable[i]);
+  const complete=measured.length===apps.length;
+  const ramUsedMb=Math.round(measured.reduce((n,a)=>n+a.ramUsedMb,0)*100)/100;
+  const cpuUsedVcpu=complete && apps.every(a=>a.cpuVcpu!==null)
+    ? Math.round(apps.reduce((n,a)=>n+a.cpuVcpu,0)*100000)/100000
+    : null;
+  return {cpuUsedVcpu,ramUsedMb,apps,complete,measuredCount:measured.length};
 }
