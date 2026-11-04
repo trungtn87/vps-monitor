@@ -290,11 +290,20 @@ export async function createServer(customEnv = null) {
         }
         const extras=await Promise.all(extraVibeApps.map(async (app,i) => {
           if(!extraUsageClients[i]) return unavailable(app);
-          try { return await extraUsageClients[i].read(); }
-          catch (err) {
-            logger.warn('Extra app '+app.id+' metrics unavailable '+String(err.message).slice(0,70));
-            return unavailable(app);
+          let result, status, lastError=null;
+          try {
+            result=await extraUsageClients[i].read();
+            status='HEALTHY';
+          } catch (err) {
+            result=unavailable(app);
+            status='UNREACHABLE';
+            lastError=String(err.message).replace(/[^A-Za-z0-9_ -]/g,'').slice(0,100);
+            logger.warn('Extra app '+app.id+' metrics unavailable '+lastError);
           }
+          await db.upsertService({serviceId:app.id,serverId:config.serverId,
+            name:app.name,healthUrl:app.resourcesUrl,status,
+            lastCheck:new Date().toISOString(),lastError});
+          return result;
         }));
         const local={ name:'VPS Monitor',appId:'vps-monitor',
           cpuVcpu:Math.round(metrics.cpuPct*1000)/100000,
