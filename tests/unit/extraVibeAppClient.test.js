@@ -68,7 +68,13 @@ test('Nhân Hòa production roster includes 11Local by default and accepts its H
     DATABASE_URL:'postgresql://tester@db.gmpgtwtxhjwjeincvkxn.supabase.co:5432/postgres'
   };
   const base=loadConfig(env);
-  assert.deepEqual(base.vibeExtraApps,[{id:'11local',name:'11Local',resourcesUrl:''}]);
+  assert.deepEqual(base.vibeExtraApps,[{id:'11local',name:'11Local',resourcesUrl:'https://11local.vn/api/monitor/resources'}]);
+  const canonical={id:'11local',name:'11Local',resourcesUrl:'https://11local.vn/api/monitor/resources'};
+  assert.deepEqual(parseVibeExtraApps(JSON.stringify([canonical])),[canonical]);
+  assert.doesNotThrow(()=>new ExtraVibeAppClient(canonical));
+  assert.throws(()=>parseVibeExtraApps(JSON.stringify([{...app,resourcesUrl:canonical.resourcesUrl}])),/NOT_ALLOWED/);
+  assert.throws(()=>parseVibeExtraApps(JSON.stringify([{...canonical,resourcesUrl:'https://11local.vn/not-the-endpoint'}])),/NOT_ALLOWED/);
+  assert.throws(()=>parseVibeExtraApps(JSON.stringify([{...canonical,resourcesUrl:'https://11local.vn.evil.invalid/api/monitor/resources'}])),/NOT_ALLOWED/);
   const url='https://sample.vibe3.vnws.com/api/monitor/resources';
   const configured=loadConfig({...env,
     VIBE_EXTRA_APPS_JSON:JSON.stringify([{id:'11local',name:'11Local',resourcesUrl:url}])
