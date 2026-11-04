@@ -115,6 +115,15 @@ test('Blocker 4: Stale Agent & Metrics Detection (> 180s)', async () => {
   });
 
   await alertEngine.checkLocalAgentHealth();
+  assert.equal(db.getAlertState('vinahost:agent_health').current_state,'RECOVERY_PENDING');
+  assert.equal(sentAlerts.length,1,'one fresh sample is not enough for Discord recovery');
+  for (let sample = 0; sample < 2; sample++) {
+    db.insertMetrics({
+      serverId:'vinahost', cpuPct:30,ramUsedMb:1000,ramTotalMb:4000,ramPct:25,
+      diskUsedGb:20,diskTotalGb:100,diskPct:20,netRxBytes:0,netTxBytes:0,uptimeSec:5000
+    });
+    await alertEngine.checkLocalAgentHealth();
+  }
   const state2 = db.getAlertState('vinahost:agent_health');
   assert.equal(state2.current_state, 'HEALTHY');
   assert.equal(sentAlerts.length, 2);
