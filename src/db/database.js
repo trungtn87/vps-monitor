@@ -226,6 +226,46 @@ export class MonitorDatabase {
     return rows.reverse(); // chronological order
   }
 
+  // --- Authenticated peer container samples (SQLite on VinaHost) ---
+  insertVibeContainerSum(serverId, sample) {
+    const stmt = this.db.prepare(`INSERT INTO vibe_container_sums
+      (server_id, source_sampled_at, cpu_used_vcpu, ram_used_mb, apps_json)
+      VALUES (?, ?, ?, ?, ?)`);
+    return stmt.run(serverId, sample.sampledAt, sample.cpuUsedVcpu,
+      sample.ramUsedMb, JSON.stringify(sample.apps));
+  }
+
+  getLatestVibeContainerSum(serverId) {
+    const row = this.db.prepare(`SELECT * FROM vibe_container_sums
+      WHERE server_id = ? ORDER BY id DESC LIMIT 1`).get(serverId);
+    if (!row) return null;
+    const apps = JSON.parse(row.apps_json);
+    const sampleMs = Date.parse(row.source_sampled_at);
+    const ageSec = Math.max(0, Math.floor((Date.now() - sampleMs) / 1000));
+    const measuredCount = apps.filter(a => typeof a.ramUsedMb === 'number' &&
+      Number.isFinite(a.ramUsedMb)).length;
+    return {
+      source:'CONTAINER_SUM', scope:'VIBE_APPLICATIONS_ONLY',
+      sampledAt:row.source_sampled_at, ageSec, isStale:ageSec > 180,
+      cpuUsedVcpu:row.cpu_used_vcpu, ramUsedMb:row.ram_used_mb, apps,
+      totalCount:apps.length, measuredCount,
+      complete:apps.length > 0 && measuredCount === apps.length
+    };
+  }
+
+  getVibeContainerSumHistory(serverId, limit=60, cpuQuotaVcpu=1, ramQuotaMb=2048, expectedApps=2) {
+    const rows=this.db.prepare(`SELECT * FROM vibe_container_sums WHERE server_id=?
+      ORDER BY id DESC LIMIT ?`).all(serverId, Math.max(1, limit * 3));
+    return rows.filter(r => r.cpu_used_vcpu !== null &&
+      JSON.parse(r.apps_json).length === expectedApps &&
+      Date.parse(r.source_sampled_at) > Date.now() - 30*24*3600*1000)
+      .slice(0,limit).reverse().map(r=>({
+        cpu_pct:Math.min(100, 100*r.cpu_used_vcpu/cpuQuotaVcpu),
+        ram_pct:Math.min(100, 100*r.ram_used_mb/ramQuotaMb),
+        created_at:r.source_sampled_at
+      }));
+  }
+
   // --- Heartbeat Log ---
   recordHeartbeat(hb) {
     const stmt = this.db.prepare(`
@@ -371,6 +411,8 @@ export class MonitorDatabase {
   // --- Retention Cleanup (30 days) ---
   cleanOldData(retentionDays = 30) {
     const cutoffDate = `-${retentionDays} days`;
+    this.db.prepare(`DELETE FROM vibe_container_sums
+      WHERE received_at < datetime('now', ?)`).run(cutoffDate);
     const delMetrics = this.db.prepare(`
       DELETE FROM node_metrics 
       WHERE created_at < datetime('now', ?)
