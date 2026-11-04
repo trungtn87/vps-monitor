@@ -177,75 +177,52 @@ export class AlertEngine {
   /**
    * Check local agent collection health (Blocker 4: Alert when local agent fails)
    */
+  /** Treat agent telemetry gaps as an incident only after three stale checks. */
   async checkLocalAgentHealth() {
     const alertKey = `${this.config.serverId}:agent_health`;
     const latestMetrics = await this.db.getLatestMetrics(this.config.serverId);
     const recorded = await this.db.getAlertState(alertKey);
-    const prevState = recorded ? recorded.current_state : 'HEALTHY';
-
-    let isStale = false;
+    const prevState = recorded?.current_state || 'HEALTHY';
+    const threshold = this.config.connectionAlertConsecutiveCount || 3;
     let elapsedSec = 0;
-
-    if (!latestMetrics) {
-      isStale = true;
-    } else {
-      const metricTime = new Date(latestMetrics.created_at + 'Z').getTime();
-      elapsedSec = Math.max(0, Math.floor((Date.now() - metricTime) / 1000));
-      // If no new metrics for > 180s (3 missed cycles)
-      if (elapsedSec > (this.config.disconnectThresholdSec || 180)) {
-        isStale = true;
-      }
+    let isStale = !latestMetrics;
+    if (latestMetrics) {
+      const time = Date.parse(`${latestMetrics.created_at}Z`);
+      elapsedSec = Number.isFinite(time) ? Math.max(0, Math.floor((Date.now()-time)/1000)) : Infinity;
+      if (elapsedSec > (this.config.disconnectThresholdSec || 180)) isStale = true;
     }
-
-    if (isStale && prevState !== 'STALE') {
-      const message = `⚠️ Cảnh báo: Monitor Agent trên [${this.config.serverName}] ngừng thu thập dữ liệu trong ${elapsedSec}s (>180s)! Dữ liệu tài nguyên có thể đã cũ (STALE).`;
-      const alertPayload = {
-        title: '⚠️ CẢNH BÁO: MONITOR AGENT NGỪNG THU THẬP',
-        description: message,
-        color: 0xE67E22,
-        fields: [
-          { name: 'VPS', value: this.config.serverName, inline: true },
-          { name: 'Thời gian gián đoạn', value: `${elapsedSec}s`, inline: true }
-        ]
-      };
-
+    if (isStale) {
+      if (prevState === 'STALE') return;
+      const count = prevState === 'STALE_PENDING' ? Number(recorded.consecutive_count || 0)+1 : 1;
+      if (count < threshold) {
+        await this.db.setAlertState(alertKey, 'STALE_PENDING', count, { elapsedSec });
+        return;
+      }
+      const message = `⚠️ Monitor Agent [${this.config.serverName}] ngừng thu thập chỉ số sau ${count} lần kiểm tra liên tiếp (dữ liệu cũ: ${elapsedSec}s).`;
       await this.db.recordAlertTransition({
-        alertKey,
-        currentState: 'STALE',
-        consecutiveCount: 1,
-        details: { elapsedSec },
-        serverId: this.config.serverId,
-        eventType: 'MONITOR_DEGRADED',
-        severity: 'WARNING',
-        message,
-        eventDetails: { elapsedSec },
-        alertPayload
+        alertKey, currentState:'STALE', consecutiveCount:count,
+        details:{elapsedSec}, serverId:this.config.serverId,
+        eventType:'MONITOR_DEGRADED', severity:'WARNING', message,
+        eventDetails:{elapsedSec,consecutive:count},
+        alertPayload:{title:'⚠️ MONITOR AGENT NGỪNG THU THẬP', description:message,
+          color:0xE67E22, fields:[
+            {name:'VPS',value:this.config.serverName,inline:true},
+            {name:'Xác nhận',value:`${count} lần kiểm tra`,inline:true}
+          ]}
       });
-
       await this.processOutbox();
-    } else if (!isStale && prevState === 'STALE') {
-      const message = `✅ Monitor Agent trên [${this.config.serverName}] đã khôi phục thu thập chỉ số bình thường.`;
-      const alertPayload = {
-        title: '✅ PHỤC HỒI: MONITOR AGENT HOẠT ĐỘNG BÌNH THƯỜNG',
-        description: message,
-        color: 0x2ECC71,
-        fields: [{ name: 'VPS', value: this.config.serverName, inline: true }]
-      };
-
+    } else if (prevState === 'STALE') {
+      const message = `✅ Monitor Agent [${this.config.serverName}] đã khôi phục thu thập chỉ số.`;
       await this.db.recordAlertTransition({
-        alertKey,
-        currentState: 'HEALTHY',
-        consecutiveCount: 1,
-        details: null,
-        serverId: this.config.serverId,
-        eventType: 'MONITOR_RECOVERED',
-        severity: 'INFO',
-        message,
-        eventDetails: null,
-        alertPayload
+        alertKey, currentState:'HEALTHY', consecutiveCount:0,
+        details:null, serverId:this.config.serverId, eventType:'MONITOR_RECOVERED',
+        severity:'INFO',message,eventDetails:null,
+        alertPayload:{title:'✅ MONITOR AGENT ĐÃ KHÔI PHỤC',description:message,
+          color:0x2ECC71,fields:[{name:'VPS',value:this.config.serverName,inline:true}]}
       });
-
       await this.processOutbox();
+    } else if (prevState === 'STALE_PENDING') {
+      await this.db.setAlertState(alertKey,'HEALTHY',0,null);
     }
   }
 
