@@ -22,7 +22,7 @@ export function parseVibeExtraApps(raw='') {
       if (typeof resourceUrl!=='string') throw new Error('VIBE_EXTRA_APP_URL_INVALID');
       let u;
       try { u=new URL(resourceUrl); } catch { throw new Error('VIBE_EXTRA_APP_URL_INVALID'); }
-      if (u.protocol!=='https:' || !u.hostname.endsWith('.vnws.com') ||
+      if (u.protocol!=='https:' || !(u.hostname.endsWith('.vnws.com') || (app.id==='11local' && u.hostname==='11local.vn' && u.pathname==='/api/monitor/resources')) ||
           u.username || u.password || u.port || u.search || u.hash ||
           !['/monitor/resources','/api/monitor/resources'].includes(u.pathname)) {
         throw new Error('VIBE_EXTRA_APP_URL_NOT_ALLOWED');
@@ -110,7 +110,7 @@ export function loadConfig(env = process.env) {
     vibePlanCpuVcpu: parseFloat(env.VIBE_PLAN_CPU_VCPU || '1'),
     vibePlanRamMb: parseFloat(env.VIBE_PLAN_RAM_MB || '2048'),
     vibeExtraApps: vibeHosting && serverId === 'nhanhoa'
-      ? parseVibeExtraApps(env.VIBE_EXTRA_APPS_JSON || '[{"id":"11local","name":"11Local"}]')
+      ? parseVibeExtraApps(env.VIBE_EXTRA_APPS_JSON || '[{"id":"11local","name":"11Local","resourcesUrl":"https://11local.vn/api/monitor/resources"}]')
       : [],
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
