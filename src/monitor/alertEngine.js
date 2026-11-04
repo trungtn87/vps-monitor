@@ -127,6 +127,11 @@ export class AlertEngine {
     const threshold = this.config.connectionAlertConsecutiveCount || 3;
     if (state === NodeState.DISCONNECTED) {
       if (prevState === NodeState.DISCONNECTED) return; // One alert per outage.
+      if (prevState === 'RECOVERY_PENDING') {
+        await this.db.setAlertState(alertKey,NodeState.DISCONNECTED,0,
+          {lastReceivedAt,elapsedSec});
+        return; // Temporary recovery flapped: same outage, no new Discord.
+      }
       const count = prevState === 'DISCONNECTED_PENDING' ? Number(recorded.consecutive_count || 0) + 1 : 1;
       if (count < threshold) {
         await this.db.setAlertState(alertKey, 'DISCONNECTED_PENDING', count,
@@ -155,8 +160,21 @@ export class AlertEngine {
       return;
     }
     if (state === NodeState.ONLINE || state === NodeState.RECOVERED) {
-      if (prevState === NodeState.DISCONNECTED) {
-        const message = `✅ VPS [${this.config.peerServerName}] đã khôi phục kết nối heartbeat.`;
+      if (prevState === NodeState.DISCONNECTED || prevState === 'RECOVERY_PENDING') {
+        // Require three *new* heartbeats before declaring recovery.
+        // A single transient success must not trigger a down/up Discord pair.
+        let details = {};
+        try { details = typeof recorded?.details_json === 'string'
+          ? JSON.parse(recorded.details_json) : (recorded?.details_json || {}); }
+        catch { details = {}; }
+        if (prevState === 'RECOVERY_PENDING' && details.lastReceivedAt === lastReceivedAt) return;
+        const count = prevState === 'RECOVERY_PENDING'
+          ? Number(recorded.consecutive_count || 0) + 1 : 1;
+        if (count < threshold) {
+          await this.db.setAlertState(alertKey,'RECOVERY_PENDING',count,{lastReceivedAt});
+          return;
+        }
+        const message = `✅ VPS [${this.config.peerServerName}] đã khôi phục kết nối heartbeat sau ${count} tín hiệu mới.`;
         await this.db.recordAlertTransition({
           alertKey, currentState: NodeState.ONLINE, consecutiveCount: 0,
           details: { lastReceivedAt }, serverId: peerId, eventType: 'RECOVERED',
