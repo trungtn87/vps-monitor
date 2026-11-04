@@ -113,3 +113,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
+
+-- Peer container sum is separate from host metrics; never mistake it for VPS resources.
+CREATE TABLE IF NOT EXISTS vibe_container_sums (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id TEXT NOT NULL REFERENCES server_registry(server_id) ON DELETE CASCADE,
+  source_sampled_at TEXT NOT NULL,
+  received_at TEXT NOT NULL DEFAULT (datetime('now')),
+  cpu_used_vcpu REAL,
+  ram_used_mb REAL NOT NULL,
+  apps_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_peer_container_sum
+ ON vibe_container_sums(server_id, id DESC);

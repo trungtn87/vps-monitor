@@ -63,6 +63,17 @@ function renderStatus(data) {
   for (const srv of data.servers) {
     const prefix = srv.serverId === 'vinahost' ? 'vh' : 'nh';
 
+    const summed = srv.serverId === 'nhanhoa' && srv.containerTotals &&
+      !srv.containerTotals.isStale && Array.isArray(srv.containerTotals.apps)
+      ? srv.containerTotals : null;
+    if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed);
+    const badge = document.getElementById(`${prefix}-app-badge`);
+    if (badge && srv.serverId === 'nhanhoa') {
+      badge.textContent = summed
+        ? `${summed.measuredCount}/${summed.totalCount} dự án · Container`
+        : 'AutoTrade · Chưa có tổng ứng dụng';
+    }
+
     // Status dot & pill
     const state = srv.connectionState || 'UNKNOWN';
     const pill = document.getElementById(`${prefix}-status`);
@@ -118,9 +129,21 @@ function renderStatus(data) {
     if (srv.metrics) {
       const m = srv.metrics;
       const staleTag = m.isStale ? ' (cũ)' : '';
+      if (summed) {
+        const complete = summed.complete === true;
+        const cpuKnown = complete && Number.isFinite(summed.cpuUsedVcpu);
+        updateMetricBar('nh-cpu', cpuKnown ? summed.cpuPct : 0,
+          cpuKnown ? `${summed.cpuUsedVcpu.toFixed(3)} / 1 vCPU (${summed.cpuPct.toFixed(1)}%) · ${summed.measuredCount}/${summed.totalCount} dự án`
+            : `CPU chưa đủ · ${summed.measuredCount}/${summed.totalCount} dự án`);
+        updateMetricBar('nh-ram', summed.ramPct,
+          complete ? `${summed.ramUsedMb.toFixed(1)} / 2048 MB (${summed.ramPct.toFixed(1)}%) · ${summed.totalCount} dự án`
+            : `Đã đo ${summed.ramUsedMb.toFixed(1)} MB · chưa đủ ${summed.totalCount} dự án`);
+        updateMetricBar('nh-disk', 0, 'N/A · không có dữ liệu lưu trữ phía Vibe');
+      } else {
       updateMetricBar(`${prefix}-cpu`, m.cpuPct, `${m.cpuPct}%${staleTag}`, m.isStale);
       updateMetricBar(`${prefix}-ram`, m.ramPct, `${m.ramUsedMb} / ${m.ramTotalMb} MB (${m.ramPct}%)${staleTag}`, m.isStale);
       updateMetricBar(`${prefix}-disk`, m.diskPct, `${m.diskUsedGb} / ${m.diskTotalGb} GB (${m.diskPct}%)${staleTag}`, m.isStale);
+      }
 
       const rxMb = (m.netRxBytes / (1024 * 1024)).toFixed(1);
       const txMb = (m.netTxBytes / (1024 * 1024)).toFixed(1);
@@ -173,6 +196,34 @@ function renderStatus(data) {
       banner.style.display = 'none';
     }
   }
+}
+
+function renderNhContainerBreakdown(sum) {
+  const el = document.getElementById('nh-container-breakdown');
+  if (!el) return;
+  el.replaceChildren();
+  const title = document.createElement('div');
+  title.className = 'container-breakdown-title';
+  title.textContent = sum ? `${sum.measuredCount}/${sum.totalCount} dự án có số liệu CPU/RAM`
+    : 'Chưa nhận dữ liệu ứng dụng từ Nhân Hòa';
+  el.appendChild(title);
+  if (sum) {
+    for (const app of sum.apps) {
+      const line=document.createElement('div');
+      line.className='container-breakdown-item';
+      const name=document.createElement('span');name.textContent=app.name;
+      const val=document.createElement('span');
+      val.textContent=Number.isFinite(app.ramUsedMb)
+        ? `${app.ramUsedMb.toFixed(1)} MB · ${Number.isFinite(app.cpuVcpu)?app.cpuVcpu.toFixed(3)+' vCPU':'CPU chưa đủ'}`
+        : 'Chưa có số liệu';
+      line.append(name,val);el.appendChild(line);
+    }
+  }
+  const note=document.createElement('div');
+  note.className='container-breakdown-subtitle';
+  note.textContent=sum ? 'Tổng container đã đo; không phải mức dùng toàn VPS. Disk N/A.'
+    : 'Đang chờ heartbeat chứa thông tin ứng dụng.';
+  el.appendChild(note);
 }
 
 function updateMetricBar(prefix, pct, labelText, isStale = false) {

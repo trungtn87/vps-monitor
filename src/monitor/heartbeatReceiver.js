@@ -1,6 +1,44 @@
 import { verifyHeartbeat, isTimestampValid } from '../common/crypto.js';
 import { logger } from '../common/logger.js';
 
+// Reject stale, malformed, or oversized peer telemetry before it reaches storage.
+// The sender is authenticated by the existing signed heartbeat.
+export function validatePeerContainerSum(sum, now = Date.now()) {
+  if (!sum || typeof sum !== 'object' || Array.isArray(sum) ||
+      !Array.isArray(sum.apps) || sum.apps.length < 2 || sum.apps.length > 10 ||
+      typeof sum.sampledAt !== 'string' ||
+      !Number.isFinite(Date.parse(sum.sampledAt)) ||
+      Math.abs(now - Date.parse(sum.sampledAt)) > 180000 ||
+      typeof sum.ramUsedMb !== 'number' || !Number.isFinite(sum.ramUsedMb) ||
+      sum.ramUsedMb < 0 || sum.ramUsedMb > 1000000 ||
+      !(sum.cpuUsedVcpu === null || (typeof sum.cpuUsedVcpu === 'number' &&
+        Number.isFinite(sum.cpuUsedVcpu) && sum.cpuUsedVcpu >= 0 && sum.cpuUsedVcpu <= 1024))) {
+    return null;
+  }
+  const seen = new Set();
+  const apps = [];
+  for (const app of sum.apps) {
+    if (!app || typeof app !== 'object' || Array.isArray(app) ||
+        typeof app.appId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(app.appId) ||
+        seen.has(app.appId) || typeof app.name !== 'string' ||
+        app.name.length < 1 || app.name.length > 64 ||
+        !(app.ramUsedMb === null || (typeof app.ramUsedMb === 'number' &&
+          Number.isFinite(app.ramUsedMb) && app.ramUsedMb >= 0 && app.ramUsedMb <= 1000000)) ||
+        !(app.cpuVcpu === null || (typeof app.cpuVcpu === 'number' &&
+          Number.isFinite(app.cpuVcpu) && app.cpuVcpu >= 0 && app.cpuVcpu <= 64))) {
+      return null;
+    }
+    seen.add(app.appId);
+    apps.push({
+      appId:app.appId, name:app.name, ramUsedMb:app.ramUsedMb, cpuVcpu:app.cpuVcpu,
+      status:app.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'MEASURED'
+    });
+  }
+  if (!seen.has('vps-monitor') || !seen.has('autotrade')) return null;
+  return {sampledAt:sum.sampledAt, ramUsedMb:sum.ramUsedMb,
+    cpuUsedVcpu:sum.cpuUsedVcpu, apps};
+}
+
 export class HeartbeatReceiver {
   /**
    * @param {object} options
@@ -135,6 +173,21 @@ export class HeartbeatReceiver {
         }
       } catch (err) {
         logger.error(`Error saving metrics from peer ${senderId}:`, err);
+      }
+    }
+
+    // Optional peer breakdown: ignored on legacy senders and unavailable storage.
+    // Only Nhân Hòa may publish this aggregate; failed/malformed telemetry
+    // must not affect heartbeat health or Discord connectivity alerts.
+    if (senderId === 'nhanhoa' && metrics?.vibeContainerSum &&
+        typeof this.db.insertVibeContainerSum === 'function') {
+      const snapshot = validatePeerContainerSum(metrics.vibeContainerSum);
+      if (snapshot) {
+        try {
+          this.db.insertVibeContainerSum(senderId, snapshot);
+        } catch (err) {
+          logger.warn('Peer container snapshot could not be persisted');
+        }
       }
     }
 
