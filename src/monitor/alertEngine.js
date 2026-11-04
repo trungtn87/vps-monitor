@@ -134,7 +134,7 @@ export class AlertEngine {
         return;
       }
       const message = isStartupFailure
-        ? `⚠️ VPS [${this.config.peerServerName}] chưa gửi heartbeat sau khởi động; lỗi liên tiếp ${count} lần kiểm tra.`
+        ? `⚠️ VPS [${this.config.peerServerName}] chưa từng gửi heartbeat sau khởi động; lỗi liên tiếp ${count} lần kiểm tra.`
         : `⚠️ VPS [${this.config.peerServerName}] mất kết nối! Không nhận heartbeat ${elapsedSec}s, xác nhận liên tiếp ${count} lần kiểm tra.`;
       const alertPayload = {
         title: isStartupFailure ? '🚨 KHÔNG CÓ HEARTBEAT KHỞI ĐỘNG' : '🚨 VPS MẤT KẾT NỐI',
@@ -161,7 +161,7 @@ export class AlertEngine {
           alertKey, currentState: NodeState.ONLINE, consecutiveCount: 0,
           details: { lastReceivedAt }, serverId: peerId, eventType: 'RECOVERED',
           severity: 'INFO', message, eventDetails: { lastReceivedAt },
-          alertPayload: { title: '✅ VPS ĐÃ KẾT NỐI LẠI', description: message,
+          alertPayload: { title: '✅ PHỤC HỒI: VPS ĐÃ KẾT NỐI LẠI', description: message,
             color: 0x2ECC71, fields: [{ name: 'VPS', value: this.config.peerServerName, inline: true }] }
         });
         await this.processOutbox();
