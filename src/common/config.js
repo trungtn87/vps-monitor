@@ -113,7 +113,9 @@ export function loadConfig(env = process.env) {
     // Customer-confirmed Vibe Starter plan; separate from measured app use.
     vibePlanCpuVcpu: parseFloat(env.VIBE_PLAN_CPU_VCPU || '1'),
     vibePlanRamMb: parseFloat(env.VIBE_PLAN_RAM_MB || '2048'),
-    vibeExtraApps: vibeHosting && serverId === 'nhanhoa' ? parseVibeExtraApps(env.VIBE_EXTRA_APPS_JSON || '') : [],
+    vibeExtraApps: vibeHosting && serverId === 'nhanhoa'
+      ? parseVibeExtraApps(env.VIBE_EXTRA_APPS_JSON || '[{"id":"11local","name":"11Local"}]')
+      : [],
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
