@@ -144,7 +144,8 @@ export async function createServer(customEnv = null) {
       ? await db.getLatestVibeContainerSum(config.serverId) : null;
     const vibeContainerSum = peerContainerTotals && !peerContainerTotals.isStale
       ? {
-          sampledAt: peerContainerTotals.sampledAt,
+          sampledAt: new Date(peerContainerTotals.sampledAt.includes('T')
+            ? peerContainerTotals.sampledAt : peerContainerTotals.sampledAt.replace(' ', 'T') + 'Z').toISOString(),
           cpuUsedVcpu: peerContainerTotals.cpuUsedVcpu,
           ramUsedMb: peerContainerTotals.ramUsedMb,
           apps: peerContainerTotals.apps
