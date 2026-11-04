@@ -69,7 +69,7 @@ export class HeartbeatReceiver {
    * @param {string} signature 
    * @returns {{ valid: boolean, code: number, reason: string }}
    */
-  async processHeartbeat(payload, signature) {
+  processHeartbeat(payload, signature) {
     this._cleanupNonces();
 
     if (!payload || typeof payload !== 'object') {
@@ -91,7 +91,7 @@ export class HeartbeatReceiver {
     const isSigValid = verifyHeartbeat(payload, signature, this.heartbeatSecret);
     if (!isSigValid) {
       logger.warn(`Heartbeat rejected from ${senderId}: invalid signature`);
-      await this.db.recordHeartbeat({
+      this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence: sequence || 0,
@@ -104,7 +104,7 @@ export class HeartbeatReceiver {
     // 2. Verify timestamp window (<= 300s clock drift)
     if (!isTimestampValid(timestamp, 300)) {
       logger.warn(`Heartbeat rejected from ${senderId}: timestamp expired or excessive clock drift`);
-      await this.db.recordHeartbeat({
+      this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence,
@@ -117,7 +117,7 @@ export class HeartbeatReceiver {
     // 3. Verify nonce for replay protection
     if (this.seenNonces.has(nonce)) {
       logger.warn(`Heartbeat rejected from ${senderId}: replayed nonce ${nonce}`);
-      await this.db.recordHeartbeat({
+      this.db.recordHeartbeat({
         senderId,
         receiverId: this.serverId,
         sequence,
@@ -133,7 +133,7 @@ export class HeartbeatReceiver {
     const latencyMs = Math.max(0, Date.now() - senderMs);
 
     // Record valid heartbeat in database
-    await this.db.recordHeartbeat({
+    this.db.recordHeartbeat({
       senderId,
       receiverId: this.serverId,
       sequence,
@@ -145,7 +145,7 @@ export class HeartbeatReceiver {
     // Record peer metrics if provided
     if (metrics && typeof metrics === 'object') {
       try {
-        await this.db.insertMetrics({
+        this.db.insertMetrics({
           serverId: senderId,
           cpuPct: metrics.cpuPct || 0,
           ramUsedMb: metrics.ramUsedMb || 0,
@@ -161,7 +161,7 @@ export class HeartbeatReceiver {
 
         // If peer provided app status, update service registry
         if (metrics.appService) {
-          await this.db.upsertService({
+          this.db.upsertService({
             serviceId: metrics.appService.serviceId,
             serverId: senderId,
             name: metrics.appService.name,
@@ -184,7 +184,7 @@ export class HeartbeatReceiver {
       const snapshot = validatePeerContainerSum(metrics.vibeContainerSum);
       if (snapshot) {
         try {
-          await this.db.insertVibeContainerSum(senderId, snapshot);
+          this.db.insertVibeContainerSum(senderId, snapshot);
         } catch (err) {
           logger.warn('Peer container snapshot could not be persisted');
         }
