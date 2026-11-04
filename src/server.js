@@ -130,12 +130,13 @@ export async function createServer(customEnv = null) {
   const getMetricsPayload = async () => {
     const latestMetrics = await db.getLatestMetrics(config.serverId);
     const services = await db.getServicesByServer(config.serverId);
-    const appService = services.length > 0 ? {
-      serviceId: services[0].service_id,
-      name: services[0].name,
-      status: services[0].status,
-      healthUrl: services[0].health_url,
-      error: services[0].last_error
+    const primary = services.find(s => s.service_id === config.appServiceId);
+    const appService = primary ? {
+      serviceId: primary.service_id,
+      name: primary.name,
+      status: primary.status,
+      healthUrl: primary.health_url,
+      error: primary.last_error
     } : null;
 
     if (!latestMetrics) return { appService, metricScope: config.metricScope };
