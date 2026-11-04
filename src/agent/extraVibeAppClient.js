@@ -31,7 +31,7 @@ export class ExtraVibeAppClient {
       throw new Error('EXTRA_VIBE_APP_SOURCE_MISSING');
     }
     const u=new URL(app.resourcesUrl);
-    if(u.protocol!=='https:' || !u.hostname.endsWith('.vnws.com') ||
+    if(u.protocol!=='https:' || !(u.hostname.endsWith('.vnws.com') || (app.id==='11local' && u.hostname==='11local.vn' && u.pathname==='/api/monitor/resources')) ||
        u.username || u.password || u.port || u.search || u.hash ||
        !['/monitor/resources','/api/monitor/resources'].includes(u.pathname)) {
       throw new Error('EXTRA_VIBE_APP_SOURCE_NOT_ALLOWED');
