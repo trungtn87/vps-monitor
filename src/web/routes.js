@@ -272,8 +272,11 @@ export class HttpRouter {
           this.db.getVibeContainerSumHistory) {
         const sum = await this.db.getLatestVibeContainerSum(serverId);
         if (sum && !sum.isStale) {
+          if (!sum.complete) return this._sendJson(res,200,{
+            serverId,metricScope:'VIBE_APPLICATIONS_PARTIAL',metrics:[]
+          });
           const metrics=await this.db.getVibeContainerSumHistory(
-            serverId,limit,this.config.vibePlanCpuVcpu,this.config.vibePlanRamMb);
+            serverId,limit,this.config.vibePlanCpuVcpu,this.config.vibePlanRamMb,sum.totalCount);
           if (metrics.length>0) return this._sendJson(res,200,{
             serverId,metricScope:'VIBE_APPLICATIONS_ONLY',metrics
           });
