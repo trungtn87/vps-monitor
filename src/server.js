@@ -9,6 +9,7 @@ import { SystemCollector } from './agent/collector.js';
 import { VibeContainerCollector } from './agent/vibeContainerCollector.js';
 import { VibeQuotaClient } from './agent/vibeQuotaClient.js';
 import { AutoTradeContainerClient, composeVibeContainerSum } from './agent/autoTradeContainerClient.js';
+import { ExtraVibeAppClient } from './agent/extraVibeAppClient.js';
 import { AppHealthChecker } from './agent/appHealth.js';
 import { HeartbeatClient } from './monitor/heartbeatClient.js';
 import { HeartbeatReceiver } from './monitor/heartbeatReceiver.js';
@@ -73,6 +74,9 @@ export async function createServer(customEnv = null) {
   // Nhân Hòa's two independent Vibe apps; read-only, fixed public HTTPS URL.
   const autoTradeUsageClient = config.vibeHosting && config.serverId === 'nhanhoa'
     ? new AutoTradeContainerClient() : null;
+  const extraVibeApps = config.vibeExtraApps || [];
+  const extraUsageClients = extraVibeApps.map(app => app.resourcesUrl
+    ? new ExtraVibeAppClient(app) : null);
   const appChecker = new AppHealthChecker(
     config.appServiceId,
     config.appServiceName,
