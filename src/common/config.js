@@ -1,3 +1,37 @@
+// Optional Vibe applications are explicit, not inferred from another container.
+// URLs are restricted to Vibe public HTTPS domains to prevent SSRF.
+export function parseVibeExtraApps(raw='') {
+  if (!raw) return [];
+  if (raw.length > 6000) throw new Error('VIBE_EXTRA_APPS_JSON_TOO_LARGE');
+  let data;
+  try { data=JSON.parse(raw); } catch { throw new Error('VIBE_EXTRA_APPS_JSON_INVALID'); }
+  if (!Array.isArray(data) || data.length > 8) {
+    throw new Error('VIBE_EXTRA_APPS_JSON_MUST_BE_ARRAY_UP_TO_8');
+  }
+  const ids=new Set(['autotrade','vps-monitor']);
+  return data.map(app=>{
+    if (!app || typeof app !== 'object' || Array.isArray(app) ||
+        typeof app.id!=='string' || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(app.id) ||
+        ids.has(app.id) || typeof app.name!=='string' ||
+        !app.name.trim() || app.name.length > 64) {
+      throw new Error('VIBE_EXTRA_APP_INVALID');
+    }
+    ids.add(app.id);
+    const resourceUrl=app.resourcesUrl || '';
+    if (resourceUrl) {
+      if (typeof resourceUrl!=='string') throw new Error('VIBE_EXTRA_APP_URL_INVALID');
+      let u;
+      try { u=new URL(resourceUrl); } catch { throw new Error('VIBE_EXTRA_APP_URL_INVALID'); }
+      if (u.protocol!=='https:' || !u.hostname.endsWith('.vnws.com') ||
+          u.username || u.password || u.port || u.search || u.hash ||
+          !['/monitor/resources','/api/monitor/resources'].includes(u.pathname)) {
+        throw new Error('VIBE_EXTRA_APP_URL_NOT_ALLOWED');
+      }
+    }
+    return {id:app.id,name:app.name.trim(),resourcesUrl:resourceUrl};
+  });
+}
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'production';
   const serverId = env.SERVER_ID || 'vinahost';
@@ -79,6 +113,7 @@ export function loadConfig(env = process.env) {
     // Customer-confirmed Vibe Starter plan; separate from measured app use.
     vibePlanCpuVcpu: parseFloat(env.VIBE_PLAN_CPU_VCPU || '1'),
     vibePlanRamMb: parseFloat(env.VIBE_PLAN_RAM_MB || '2048'),
+    vibeExtraApps: vibeHosting && serverId === 'nhanhoa' ? parseVibeExtraApps(env.VIBE_EXTRA_APPS_JSON || '') : [],
     metricScope: vibeHosting ? 'CONTAINER' : 'HOST',
     peerMetricScope: env.PEER_METRIC_SCOPE || 'HOST',
     host,
