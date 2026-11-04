@@ -117,84 +117,60 @@ export class AlertEngine {
    * Check peer heartbeat connectivity
    * Atomic state transition + outbox queue (Blocker 2)
    */
+  /** Three consecutive 30-second checks after a heartbeat timeout before Discord. */
   async checkPeerHeartbeat() {
     const peerId = this.config.peerServerId;
     const { state, elapsedSec, lastReceivedAt, isStartupFailure } = await this.evaluator.evaluatePeerHeartbeat(peerId);
-
     const alertKey = `${peerId}:heartbeat`;
     const recorded = await this.db.getAlertState(alertKey);
-    const prevState = recorded ? recorded.current_state : NodeState.UNKNOWN;
-
-    // Transition: became DISCONNECTED
-    if (state === NodeState.DISCONNECTED && prevState !== NodeState.DISCONNECTED) {
-      logger.warn(`Peer ${peerId} is DISCONNECTED (no heartbeat for ${elapsedSec}s, startupFail: ${!!isStartupFailure})`);
-      
+    const prevState = recorded?.current_state || NodeState.UNKNOWN;
+    const threshold = this.config.connectionAlertConsecutiveCount || 3;
+    if (state === NodeState.DISCONNECTED) {
+      if (prevState === NodeState.DISCONNECTED) return; // One alert per outage.
+      const count = prevState === 'DISCONNECTED_PENDING' ? Number(recorded.consecutive_count || 0) + 1 : 1;
+      if (count < threshold) {
+        await this.db.setAlertState(alertKey, 'DISCONNECTED_PENDING', count,
+          { elapsedSec, lastReceivedAt, isStartupFailure: !!isStartupFailure });
+        return;
+      }
       const message = isStartupFailure
-        ? `⚠️ VPS [${this.config.peerServerName}] chưa từng gửi heartbeat sau ${elapsedSec}s khởi động! Có thể VPS đang tắt hoặc tiến trình monitor gặp lỗi.`
-        : `⚠️ VPS [${this.config.peerServerName}] mất kết nối! Không nhận được heartbeat trong ${elapsedSec} giây (> 180s).`;
-
+        ? `⚠️ VPS [${this.config.peerServerName}] chưa gửi heartbeat sau khởi động; lỗi liên tiếp ${count} lần kiểm tra.`
+        : `⚠️ VPS [${this.config.peerServerName}] mất kết nối! Không nhận heartbeat ${elapsedSec}s, xác nhận liên tiếp ${count} lần kiểm tra.`;
       const alertPayload = {
-        title: isStartupFailure ? '🚨 CẢNH BÁO: KHÔNG CÓ HEARTBEAT KHỞI ĐỘNG' : '🚨 CẢNH BÁO: VPS MẤT KẾT NỐI',
-        description: message,
-        color: 0xE74C3C, // Red
+        title: isStartupFailure ? '🚨 KHÔNG CÓ HEARTBEAT KHỞI ĐỘNG' : '🚨 VPS MẤT KẾT NỐI',
+        description: message, color: 0xE74C3C,
         fields: [
           { name: 'VPS', value: this.config.peerServerName, inline: true },
-          { name: 'Thời gian gián đoạn', value: `${elapsedSec}s`, inline: true },
+          { name: 'Xác nhận', value: `${count} lần kiểm tra liên tiếp`, inline: true },
           { name: 'Heartbeat cuối', value: lastReceivedAt ? `${lastReceivedAt} UTC` : 'Chưa từng nhận', inline: false }
         ]
       };
-
-      // Atomic transition + outbox enqueue (Blocker 2)
       await this.db.recordAlertTransition({
-        alertKey,
-        currentState: NodeState.DISCONNECTED,
-        consecutiveCount: 1,
+        alertKey, currentState: NodeState.DISCONNECTED, consecutiveCount: count,
         details: { elapsedSec, lastReceivedAt, isStartupFailure: !!isStartupFailure },
-        serverId: peerId,
-        eventType: 'HEARTBEAT_LOSS',
-        severity: 'CRITICAL',
-        message,
-        eventDetails: { elapsedSec, lastReceivedAt, isStartupFailure: !!isStartupFailure },
-        alertPayload
+        serverId: peerId, eventType: 'HEARTBEAT_LOSS', severity: 'CRITICAL',
+        message, eventDetails: { elapsedSec, lastReceivedAt, consecutive: count }, alertPayload
       });
-
       await this.processOutbox();
+      return;
     }
-    // Transition: RECOVERED after DISCONNECTED
-    else if ((state === NodeState.RECOVERED || (state === NodeState.ONLINE && prevState === NodeState.DISCONNECTED))) {
-      logger.info(`Peer ${peerId} has RECOVERED connection`);
-
-      const message = `✅ VPS [${this.config.peerServerName}] đã khôi phục kết nối heartbeat thành công.`;
-      const alertPayload = {
-        title: '✅ PHỤC HỒI: VPS ĐÃ KẾT NỐI LẠI',
-        description: message,
-        color: 0x2ECC71, // Green
-        fields: [
-          { name: 'VPS', value: this.config.peerServerName, inline: true },
-          { name: 'Trạng thái hiện tại', value: 'ONLINE', inline: true },
-          { name: 'Thời gian nhận lại', value: `${lastReceivedAt} UTC`, inline: false }
-        ]
-      };
-
-      // Atomic transition + outbox enqueue (Blocker 2)
-      await this.db.recordAlertTransition({
-        alertKey,
-        currentState: NodeState.ONLINE,
-        consecutiveCount: 1,
-        details: { lastReceivedAt },
-        serverId: peerId,
-        eventType: 'RECOVERED',
-        severity: 'INFO',
-        message,
-        eventDetails: { lastReceivedAt },
-        alertPayload
-      });
-
-      await this.processOutbox();
-    }
-    // If ONLINE and was already ONLINE (or initial UNKNOWN transition to ONLINE)
-    else if (state === NodeState.ONLINE && prevState !== NodeState.ONLINE && prevState !== NodeState.DISCONNECTED) {
-      await this.db.setAlertState(alertKey, NodeState.ONLINE, 1, { lastReceivedAt });
+    if (state === NodeState.ONLINE || state === NodeState.RECOVERED) {
+      if (prevState === NodeState.DISCONNECTED) {
+        const message = `✅ VPS [${this.config.peerServerName}] đã khôi phục kết nối heartbeat.`;
+        await this.db.recordAlertTransition({
+          alertKey, currentState: NodeState.ONLINE, consecutiveCount: 0,
+          details: { lastReceivedAt }, serverId: peerId, eventType: 'RECOVERED',
+          severity: 'INFO', message, eventDetails: { lastReceivedAt },
+          alertPayload: { title: '✅ VPS ĐÃ KẾT NỐI LẠI', description: message,
+            color: 0x2ECC71, fields: [{ name: 'VPS', value: this.config.peerServerName, inline: true }] }
+        });
+        await this.processOutbox();
+      } else if (prevState !== NodeState.ONLINE) {
+        // Transient one- or two-check failure: reset without any Discord message.
+        await this.db.setAlertState(alertKey, NodeState.ONLINE, 0, { lastReceivedAt });
+      }
+    } else if (prevState === 'DISCONNECTED_PENDING') {
+      await this.db.setAlertState(alertKey, NodeState.UNKNOWN, 0, { lastReceivedAt });
     }
   }
 
