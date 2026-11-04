@@ -229,54 +229,70 @@ export class AlertEngine {
   /**
    * Check local app service health (11Ship or AutoTrade)
    */
-  /** Health endpoints must fail three consecutive checks before Discord. */
+  /** Three independent health probes must fail before notifying Discord.
+   * Likewise, require three distinct successful probes before recovery.
+   * Each service holds its own persistent counter across restarts. */
   async checkLocalAppHealth() {
     const services = await this.db.getServicesByServer(this.config.serverId);
-    const threshold = this.config.connectionAlertConsecutiveCount || 3;
+    const threshold = Math.max(3, Number(this.config.connectionAlertConsecutiveCount) || 3);
     for (const svc of services) {
       const alertKey = `${svc.service_id}:health`;
       const recorded = await this.db.getAlertState(alertKey);
       const prevState = recorded?.current_state || 'HEALTHY';
+      let details = {};
+      try { details = typeof recorded?.details_json === 'string'
+        ? JSON.parse(recorded.details_json) : (recorded?.details_json || {}); }
+      catch { details = {}; }
+      const checkedAt = String(svc.last_check || '');
+      if (!checkedAt || details.lastCheckedAt === checkedAt) continue;
       const failed = svc.status === 'UNHEALTHY' || svc.status === 'UNREACHABLE';
-      const latched = ['DOWN','UNHEALTHY','UNREACHABLE'].includes(prevState);
+      const down = ['DOWN','UNHEALTHY','UNREACHABLE'].includes(prevState);
       if (failed) {
-        if (latched) continue; // Do not repeat when error subtype changes.
+        if (down) continue;
+        if (prevState === 'RECOVERY_PENDING') {
+          await this.db.setAlertState(alertKey,'DOWN',0,{lastCheckedAt:checkedAt});
+          continue; // Recovery flapped; stay in the same incident.
+        }
         const count = prevState === 'DOWN_PENDING' ? Number(recorded.consecutive_count || 0) + 1 : 1;
         if (count < threshold) {
           await this.db.setAlertState(alertKey,'DOWN_PENDING',count,
-            { status: svc.status, error: svc.last_error });
+            { lastCheckedAt:checkedAt,status:svc.status,error:svc.last_error });
           continue;
         }
         const message = `⚠️ Dịch vụ [${svc.name}] trên [${this.config.serverName}] lỗi ${count} lần kiểm tra liên tiếp! Trạng thái: ${svc.status}.`;
         await this.db.recordAlertTransition({
-          alertKey, currentState:'DOWN', consecutiveCount:count,
-          details:{ status:svc.status,error:svc.last_error },
-          serverId:this.config.serverId, eventType:'SERVICE_DOWN', severity:'CRITICAL',
-          message, eventDetails:{ status:svc.status,error:svc.last_error,consecutive:count },
-          alertPayload:{
-            title:'🚨 DỊCH VỤ ỨNG DỤNG MẤT KẾT NỐI', description:message, color:0xE74C3C,
+          alertKey,currentState:'DOWN',consecutiveCount:count,
+          details:{ lastCheckedAt:checkedAt,status:svc.status,error:svc.last_error },
+          serverId:this.config.serverId,eventType:'SERVICE_DOWN',severity:'CRITICAL',
+          message,eventDetails:{status:svc.status,consecutive:count},
+          alertPayload:{title:'🚨 DỊCH VỤ ỨNG DỤNG MẤT KẾT NỐI',description:message,color:0xE74C3C,
             fields:[{name:'Dịch vụ',value:svc.name,inline:true},
               {name:'VPS',value:this.config.serverName,inline:true},
-              {name:'Xác nhận',value:`${count} lần kiểm tra`,inline:true}]
-          }
+              {name:'Xác nhận',value:`${count} lần kiểm tra`,inline:true}]}
         });
         await this.processOutbox();
       } else if (svc.status === 'HEALTHY') {
-        if (latched) {
-          const message=`✅ Dịch vụ [${svc.name}] trên [${this.config.serverName}] đã hoạt động lại.`;
+        if (down || prevState === 'RECOVERY_PENDING') {
+          const count = prevState === 'RECOVERY_PENDING'
+            ? Number(recorded.consecutive_count || 0) + 1 : 1;
+          if (count < threshold) {
+            await this.db.setAlertState(alertKey,'RECOVERY_PENDING',count,
+              {lastCheckedAt:checkedAt});
+            continue;
+          }
+          const message=`✅ Dịch vụ [${svc.name}] trên [${this.config.serverName}] đã ổn định lại sau ${count} lần kiểm tra thành công.`;
           await this.db.recordAlertTransition({
-            alertKey, currentState:'HEALTHY', consecutiveCount:0, details:null,
-            serverId:this.config.serverId, eventType:'SERVICE_RECOVERED', severity:'INFO',
-            message, eventDetails:null,
+            alertKey,currentState:'HEALTHY',consecutiveCount:0,
+            details:{lastCheckedAt:checkedAt},serverId:this.config.serverId,
+            eventType:'SERVICE_RECOVERED',severity:'INFO',message,
+            eventDetails:{consecutive:count},
             alertPayload:{title:'✅ DỊCH VỤ ĐÃ KHÔI PHỤC',description:message,color:0x2ECC71,
               fields:[{name:'Dịch vụ',value:svc.name,inline:true}]}
           });
           await this.processOutbox();
         } else if (prevState === 'DOWN_PENDING') {
-          await this.db.setAlertState(alertKey,'HEALTHY',0,null);
+          await this.db.setAlertState(alertKey,'HEALTHY',0,{lastCheckedAt:checkedAt});
         }
-      } else if (prevState === 'DOWN_PENDING') {
-        await this.db.setAlertState(alertKey,'HEALTHY',0,null);
       }
     }
   }
