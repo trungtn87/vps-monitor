@@ -68,7 +68,7 @@ function renderStatus(data) {
     const quota = srv.hostingQuota && !srv.hostingQuota.isStale ? srv.hostingQuota : null;
     const summed = srv.serverId === 'nhanhoa' &&
       srv.containerTotals && !srv.containerTotals.isStale &&
-      Array.isArray(srv.containerTotals.apps) && srv.containerTotals.apps.length === 2
+      Array.isArray(srv.containerTotals.apps) && srv.containerTotals.apps.length >= 2
         ? srv.containerTotals : null;
     if (srv.serverId === 'nhanhoa') renderNhContainerBreakdown(summed);
 
@@ -78,7 +78,7 @@ function renderStatus(data) {
       const appName = prefix === 'nh' ? 'AutoTrade' : '11Ship';
       scopeBadge.textContent = quota && prefix === 'nh'
         ? 'Tổng gói Vibe Hosting'
-        : summed && prefix === 'nh' ? '2 ứng dụng · Container'
+        : summed && prefix === 'nh' ? `${summed.measuredCount}/${summed.totalCount} dự án · Container`
         : srv.metricScope === 'CONTAINER'
           ? `${appName} · Container`
           : appName;
@@ -147,13 +147,17 @@ function renderStatus(data) {
         updateMetricBar(`${prefix}-disk`, quota.diskPct,
           `${quota.diskUsedMb.toFixed(2)} / ${quota.diskQuotaMb} MB (${quota.diskPct.toFixed(1)}%)`);
       } else if (summed && prefix === 'nh') {
-        const cpuKnown = Number.isFinite(summed.cpuUsedVcpu);
+        const complete = summed.complete === true;
+        const cpuKnown = complete && Number.isFinite(summed.cpuUsedVcpu);
+        const suffix = `${summed.measuredCount}/${summed.totalCount} dự án`;
         updateMetricBar('nh-cpu', cpuKnown ? summed.cpuPct : 0,
           cpuKnown
-            ? `${summed.cpuUsedVcpu.toFixed(3)} / ${summed.cpuQuotaVcpu} vCPU (${summed.cpuPct.toFixed(1)}%) · 2 app`
-            : 'Đang đo CPU 2 app');
+            ? `${summed.cpuUsedVcpu.toFixed(3)} / ${summed.cpuQuotaVcpu} vCPU (${summed.cpuPct.toFixed(1)}%) · ${suffix}`
+            : `Chưa đủ CPU · ${suffix}`);
         updateMetricBar('nh-ram', summed.ramPct,
-          `${summed.ramUsedMb.toFixed(1)} / ${summed.ramQuotaMb} MB (${summed.ramPct.toFixed(1)}%) · 2 app`);
+          complete
+            ? `${summed.ramUsedMb.toFixed(1)} / ${summed.ramQuotaMb} MB (${summed.ramPct.toFixed(1)}%) · ${suffix}`
+            : `Đã đo ${summed.ramUsedMb.toFixed(1)} MB · ${suffix} (chưa đủ tổng)`);
         updateMetricBar('nh-disk', 0, 'N/A · chưa có dữ liệu lưu trữ');
       } else {
         updateMetricBar(`${prefix}-cpu`, m.cpuPct,
