@@ -211,6 +211,10 @@ export class AlertEngine {
     }
     if (isStale) {
       if (prevState === 'STALE') return;
+      if (prevState === 'RECOVERY_PENDING') {
+        await this.db.setAlertState(alertKey,'STALE',0,{elapsedSec});
+        return; // Agent data briefly resumed, then became stale again.
+      }
       const count = prevState === 'STALE_PENDING' ? Number(recorded.consecutive_count || 0)+1 : 1;
       if (count < threshold) {
         await this.db.setAlertState(alertKey, 'STALE_PENDING', count, { elapsedSec });
@@ -229,8 +233,21 @@ export class AlertEngine {
           ]}
       });
       await this.processOutbox();
-    } else if (prevState === 'STALE') {
-      const message = `✅ Monitor Agent [${this.config.serverName}] đã khôi phục thu thập chỉ số.`;
+    } else if (prevState === 'STALE' || prevState === 'RECOVERY_PENDING') {
+      // Only fresh, distinct metric snapshots count as recovery.
+      let details = {};
+      try { details = typeof recorded?.details_json === 'string'
+        ? JSON.parse(recorded.details_json) : (recorded?.details_json || {}); }
+      catch { details = {}; }
+      const metricId = latestMetrics?.id ?? latestMetrics?.created_at;
+      if (prevState === 'RECOVERY_PENDING' && details.metricId === metricId) return;
+      const count = prevState === 'RECOVERY_PENDING'
+        ? Number(recorded.consecutive_count || 0) + 1 : 1;
+      if (count < threshold) {
+        await this.db.setAlertState(alertKey,'RECOVERY_PENDING',count,{metricId});
+        return;
+      }
+      const message = `✅ Monitor Agent [${this.config.serverName}] đã khôi phục thu thập chỉ số sau ${count} mẫu mới.`;
       await this.db.recordAlertTransition({
         alertKey, currentState:'HEALTHY', consecutiveCount:0,
         details:null, serverId:this.config.serverId, eventType:'MONITOR_RECOVERED',
