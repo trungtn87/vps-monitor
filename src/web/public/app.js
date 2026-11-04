@@ -228,30 +228,32 @@ function renderNhContainerBreakdown(summed) {
   if (!el) return;
   el.replaceChildren();
   const title = document.createElement('div');
-  title.className='container-breakdown-title';
-  title.textContent = summed ? 'Số liệu thực đo của 2 container' :
-    'Chưa đủ số liệu từ cả VPS Monitor và AutoTrade';
+  title.className = 'container-breakdown-title';
+  title.textContent = summed
+    ? `${summed.measuredCount}/${summed.totalCount} dự án có số liệu CPU/RAM`
+    : 'Đang chờ số liệu ứng dụng Nhân Hòa';
   el.appendChild(title);
   if (summed) {
     for (const app of summed.apps) {
       const line = document.createElement('div');
-      line.className='container-breakdown-item';
+      line.className = 'container-breakdown-item';
       const name = document.createElement('span');
       name.textContent = app.name;
       const value = document.createElement('span');
-      value.textContent = `${app.ramUsedMb.toFixed(1)} MB RAM · ${app.cpuVcpu === null ? 'CPU đang đo' : app.cpuVcpu.toFixed(3) + ' vCPU'}`;
+      value.textContent = Number.isFinite(app.ramUsedMb)
+        ? `${app.ramUsedMb.toFixed(1)} MB · ${Number.isFinite(app.cpuVcpu) ? app.cpuVcpu.toFixed(3)+' vCPU' : 'CPU chưa đủ'}`
+        : 'Chưa kết nối số liệu';
       line.append(name, value);
       el.appendChild(line);
     }
   }
   const note = document.createElement('div');
-  note.className='container-breakdown-subtitle';
-  note.textContent = summed ?
-    'Tổng container / hạn mức gói (1 vCPU, 2 GB); không gồm overhead nhà cung cấp. Disk chưa xác minh.' :
-    'Đợi bản AutoTrade có endpoint đo tài nguyên và mẫu mới; không ước tính từ một container.';
+  note.className = 'container-breakdown-subtitle';
+  note.textContent = !summed ? 'Chưa có mẫu đo ứng dụng.'
+    : summed.complete ? 'Tổng các container đã đo, không gồm chi phí hệ thống nhà cung cấp; Disk N/A.'
+    : 'Mức sử dụng chỉ cộng các dự án đã đo, chưa phải tổng toàn bộ ứng dụng.';
   el.appendChild(note);
 }
-
 function updateMetricBar(prefix, pct, labelText, isStale = false) {
   const valEl = document.getElementById(prefix);
   const barEl = document.getElementById(`${prefix}-bar`);
