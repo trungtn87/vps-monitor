@@ -136,6 +136,8 @@ export function loadConfig(env = process.env) {
     heartbeatSecret,
     heartbeatIntervalSec: parseInt(env.HEARTBEAT_INTERVAL_SEC || '60', 10),
     disconnectThresholdSec: parseInt(env.DISCONNECT_THRESHOLD_SEC || '180', 10),
+    // Require 3 successive failed monitoring checks before Discord.
+    connectionAlertConsecutiveCount: 3,
     startupGraceSec: parseInt(env.STARTUP_GRACE_SEC || env.DISCONNECT_THRESHOLD_SEC || '180', 10),
 
     // App Health Endpoint (local service on this VPS)
